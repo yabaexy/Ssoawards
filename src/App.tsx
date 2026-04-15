@@ -1184,7 +1184,7 @@ export default function App() {
                       <ArrowRightLeft className="text-[#555]" />
                       <div className="space-y-1 text-right">
                         <p className="text-[10px] text-[#888] uppercase">To</p>
-                        <p className="text-xl font-bold">7603 WYDA</p>
+                        <p className="text-xl font-bold">760 WYDA</p>
                       </div>
                     </div>
                     <button 
