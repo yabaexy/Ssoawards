@@ -118,33 +118,41 @@ export default function App() {
         throw new Error(msg);
       }
       let data = await response.json();
-      
-      if (!data || data.length === 0) {
-        console.log(`No candidates found for ${targetYear}, generating...`);
-        data = await generateCandidates(targetYear);
-        
-        // Save to database for future use
-        try {
-          await fetch('/api/candidates', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data.map((c: any) => ({
-              name: c.name,
-              story: c.story,
-              reason: c.reason,
-              year: c.year,
-              image_url: c.image_url
-            })))
-          });
-        } catch (saveErr) {
-          console.error("Failed to save generated candidates:", saveErr);
-        }
-      }
-      
       setCandidates(data);
     } catch (err: any) {
       console.error("Fetch error:", err);
       setError(`Failed to fetch candidates: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleInitializeYear = async () => {
+    if (!isAdmin || !walletAddress) return;
+    setLoading(true);
+    try {
+      // Create 5 empty slots
+      const emptySlots = Array.from({ length: 5 }).map((_, i) => ({
+        name: "",
+        story: "",
+        reason: "",
+        year: year,
+        is_published: false,
+        image_url: `https://picsum.photos/seed/empty-${year}-${i}/800/600`
+      }));
+
+      const res = await fetch('/api/candidates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(emptySlots)
+      });
+
+      if (!res.ok) throw new Error("Failed to initialize year");
+      
+      setSuccess(`Initialized 5 empty slots for ${year}`);
+      fetchCandidates(year);
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -626,6 +634,21 @@ export default function App() {
                   <RefreshCw size={48} className="animate-spin text-[#00ff00]" />
                   <p className="text-[10px] uppercase tracking-widest">Compiling Candidates...</p>
                 </div>
+              ) : candidates.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 border border-dashed border-[#333] gap-6">
+                  <div className="text-center space-y-2">
+                    <p className="text-sm text-[#555] uppercase font-bold tracking-widest">No candidates found for {year}</p>
+                    <p className="text-[10px] text-[#333]">The digital gene pool is surprisingly quiet this year.</p>
+                  </div>
+                  {isAdmin && (
+                    <button 
+                      onClick={handleInitializeYear}
+                      className="px-8 py-3 bg-[#00ff00] text-black text-xs font-black uppercase tracking-widest hover:bg-white transition-all border border-[#00ff00]"
+                    >
+                      Initialize 5 Empty Slots
+                    </button>
+                  )}
+                </div>
               ) : (
                 candidates
                   .filter(c => showAdminEdit ? !c.is_published : c.is_published || isAdmin)
@@ -989,7 +1012,7 @@ export default function App() {
               <div className="space-y-4">
                 <div className="flex justify-between items-end">
                   <label className="text-[10px] font-bold text-[#555] uppercase">You Pay</label>
-                  <span className="text-[10px] text-[#00ff00] font-bold">1 USDT = 760.3 WYDA</span>
+                  <span className="text-[10px] text-[#00ff00] font-bold">1 USDT = 763 WYDA</span>
                 </div>
                 <div className="relative">
                   <input 
@@ -1013,7 +1036,7 @@ export default function App() {
                   <label className="text-[10px] font-bold text-[#555] uppercase">You Receive (Est.)</label>
                   <div className="p-4 bg-black/50 border border-[#333] flex justify-between items-center opacity-80">
                     <span className="text-xl font-bold text-[#00ff00]">
-                      {(parseFloat(swapAmount || "0") * 760.3).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {(parseFloat(swapAmount || "0") * 763).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                     <span className="text-xs font-bold text-[#888]">WYDA</span>
                   </div>
@@ -1064,7 +1087,7 @@ export default function App() {
 
               <div className="p-4 bg-black/50 border border-[#333] rounded-sm">
                 <p className="text-[9px] text-[#555] leading-relaxed uppercase">
-                  Transactions are processed via ApeSwap Router on BSC. Rate is estimated at 1 USDT = 760.3 WYDA. Ensure you have sufficient USDT and BNB for gas.
+                  Transactions are processed via ApeSwap Router on BSC. Rate is estimated at 1 USDT = 763 WYDA. Ensure you have sufficient USDT and BNB for gas.
                 </p>
               </div>
             </div>
@@ -1184,7 +1207,7 @@ export default function App() {
                       <ArrowRightLeft className="text-[#555]" />
                       <div className="space-y-1 text-right">
                         <p className="text-[10px] text-[#888] uppercase">To</p>
-                        <p className="text-xl font-bold">760 WYDA</p>
+                        <p className="text-xl font-bold">763 WYDA</p>
                       </div>
                     </div>
                     <button 
