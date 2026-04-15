@@ -1214,8 +1214,6 @@ export default function App() {
                         <p className="text-[10px] text-[#888] uppercase">To</p>
 <<<<<<< HEAD
                         <p className="text-xl font-bold">763 WYDA</p>
-=======
-                        <p className="text-xl font-bold">763 WYDA</p>
 >>>>>>> d0d189a2867b9670e8cb905513e0918db2364e22
                       </div>
                     </div>
