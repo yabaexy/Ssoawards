@@ -597,7 +597,7 @@ export default function App() {
                 Celebrating the <span className="text-[#00ff00]">Source Code</span> of Human Error.
               </h2>
               <p className="max-w-2xl text-[#888] text-sm leading-relaxed">
-                Every year, a significant number of people die due to corporate crime. While some are simply victims, there are also cases where perpetrators meet such demise. We cover the stories of those who are dying as perpetrators.
+                The Source One Awards honor those who have improved the human collective intelligence by removing themselves from the digital gene pool in spectacularly ill-advised technological ways.
               </p>
             </section>
 
@@ -1207,7 +1207,11 @@ export default function App() {
                       <ArrowRightLeft className="text-[#555]" />
                       <div className="space-y-1 text-right">
                         <p className="text-[10px] text-[#888] uppercase">To</p>
+<<<<<<< HEAD
                         <p className="text-xl font-bold">763 WYDA</p>
+=======
+                        <p className="text-xl font-bold">7603 WYDA</p>
+>>>>>>> d0d189a2867b9670e8cb905513e0918db2364e22
                       </div>
                     </div>
                     <button 
