@@ -4,6 +4,7 @@
  */
 // src/lib/supabase.ts
 import { createClient } from "@supabase/supabase-js";
+import { supabase } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";   // "motion/react" → 이렇게 변경
@@ -107,68 +108,60 @@ export default function App() {
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
 
   const fetchCandidates = async (targetYear: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const isAdminCheck = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
-      const response = await fetch(`/api/candidates/${targetYear}?isAdmin=${isAdminCheck}`);
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        let msg = errorData.message || errorData.error || "Failed to fetch candidates from database";
-        if (msg.includes("Could not find the table") || msg.includes("relation") && msg.includes("does not exist")) {
-          msg = "Database tables are missing. Please run the SQL script in 'supabase_schema.sql' in your Supabase SQL Editor.";
-        }
-        throw new Error(msg);
-      }
-      let data = await response.json();
-      
-      if (!data || data.length === 0) {
-        console.log(`No candidates found for ${targetYear}, generating...`);
-        data = await generateCandidates(targetYear);
-        
-        // Save to database for future use
-        try {
-          await fetch('/api/candidates', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data.map((c: any) => ({
-              name: c.name,
-              story: c.story,
-              reason: c.reason,
-              year: c.year,
-              image_url: c.image_url
-            })))
-          });
-        } catch (saveErr) {
-          console.error("Failed to save generated candidates:", saveErr);
-        }
-      }
-      
-      setCandidates(data);
-    } catch (err: any) {
-      console.error("Fetch error:", err);
-      setError(`Failed to fetch candidates: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  setLoading(true);
+  setError(null);
 
-  const fetchTopics = async () => {
-    try {
-      const res = await fetch('/api/topics');
-      if (!res.ok) {
-        const errorData = await res.json();
-        if (errorData.error?.includes("Could not find the table")) {
-          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
-        }
-        throw new Error(errorData.error);
-      }
-      const data = await res.json();
-      setTopics(data);
-    } catch (err) {
-      console.error("Failed to fetch topics", err);
+  try {
+    const isAdminCheck = walletAddress
+      ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase())
+      : false;
+
+    let query = supabase
+      .from("candidates")
+      .select("*")
+      .eq("year", targetYear);
+
+    // 관리자 아니면 공개된 것만
+    if (!isAdminCheck) {
+      query = query.eq("is_published", true);
     }
-  };
+
+    const { data, error } = await query.order("created_at", {
+      ascending: true,
+    });
+
+    if (error) throw error;
+
+    let finalData = data || [];
+
+    // 👉 기존 generateCandidates 유지
+    if (finalData.length === 0) {
+      console.log("No candidates → generating...");
+      finalData = await generateCandidates(targetYear);
+
+      // DB 저장
+      await supabase.from("candidates").insert(
+        finalData.map((c: any) => ({
+          name: c.name,
+          story: c.story,
+          reason: c.reason,
+          year: c.year,
+          image_url: c.image_url,
+          is_published: false,
+        }))
+      );
+    }
+
+    setCandidates(finalData);
+  } catch (err: any) {
+    console.error(err);
+    setError(`Failed to fetch candidates: ${err.message}`);
+  } finally {
+    setLoading(false);
+  }
+};
+
+const fetchTopic
 
   const fetchPoints = async (address: string) => {
     try {
