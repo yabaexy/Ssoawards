@@ -87,6 +87,7 @@ export default function App() {
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
   const [wydaBalance, setWydaBalance] = useState("0");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showAdminEdit, setShowAdminEdit] = useState(false);
 
   const isAdmin = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
 
@@ -391,16 +392,34 @@ export default function App() {
             ].map(item => (
               <button 
                 key={item.id}
-                onClick={() => setViewMode(item.id as ViewMode)}
+                onClick={() => {
+                  setViewMode(item.id as ViewMode);
+                  setShowAdminEdit(false);
+                }}
                 className={cn(
                   "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                  viewMode === item.id ? "bg-[#00ff00] text-black" : "text-[#888] hover:text-white"
+                  viewMode === item.id && !showAdminEdit ? "bg-[#00ff00] text-black" : "text-[#888] hover:text-white"
                 )}
               >
                 <item.icon size={12} />
                 {item.name}
               </button>
             ))}
+            {isAdmin && (
+              <button 
+                onClick={() => {
+                  setViewMode('awards');
+                  setShowAdminEdit(true);
+                }}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
+                  showAdminEdit ? "bg-red-600 text-white" : "text-red-500/70 hover:text-red-500"
+                )}
+              >
+                <Code size={12} />
+                Edit
+              </button>
+            )}
           </nav>
         </div>
 
@@ -480,17 +499,34 @@ export default function App() {
                       key={item.id}
                       onClick={() => {
                         setViewMode(item.id as ViewMode);
+                        setShowAdminEdit(false);
                         setIsMobileMenuOpen(false);
                       }}
                       className={cn(
                         "flex items-center gap-4 px-4 py-4 text-sm font-bold uppercase tracking-widest transition-all border border-[#333] rounded-sm",
-                        viewMode === item.id ? "bg-[#00ff00] text-black border-[#00ff00]" : "text-[#888] hover:text-white"
+                        viewMode === item.id && !showAdminEdit ? "bg-[#00ff00] text-black border-[#00ff00]" : "text-[#888] hover:text-white"
                       )}
                     >
                       <item.icon size={18} />
                       {item.name}
                     </button>
                   ))}
+                  {isAdmin && (
+                    <button 
+                      onClick={() => {
+                        setViewMode('awards');
+                        setShowAdminEdit(true);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-4 px-4 py-4 text-sm font-bold uppercase tracking-widest transition-all border border-red-500/30 rounded-sm",
+                        showAdminEdit ? "bg-red-600 text-white border-red-600" : "text-red-500 hover:bg-red-500/10"
+                      )}
+                    >
+                      <Code size={18} />
+                      Admin Edit
+                    </button>
+                  )}
                 </nav>
 
                 {walletAddress && (
@@ -587,8 +623,10 @@ export default function App() {
                   <p className="text-[10px] uppercase tracking-widest">Compiling Candidates...</p>
                 </div>
               ) : (
-                candidates.map((candidate, idx) => (
-                  <motion.div 
+                candidates
+                  .filter(c => showAdminEdit ? !c.is_published : c.is_published || isAdmin)
+                  .map((candidate, idx) => (
+                    <motion.div 
                     key={candidate.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
