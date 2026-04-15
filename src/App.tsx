@@ -33,10 +33,12 @@ import {
   Lock,
   Zap,
   ArrowRightLeft,
-  Droplets
+  Droplets,
+  Menu,
+  X
 } from "lucide-react";
 import { generateCandidates, type Candidate } from "./lib/gemini";
-import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity } from "./lib/web3";
+import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity, getWYDABalance } from "./lib/web3";
 import { cn } from "./lib/utils";
 import type { DbTopic, UserPoints } from "./lib/supabase";
 
@@ -83,6 +85,8 @@ export default function App() {
   const [success, setSuccess] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
+  const [wydaBalance, setWydaBalance] = useState("0");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const isAdmin = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
 
@@ -173,6 +177,10 @@ export default function App() {
       const data = await res.json();
       setYmpPoints(data.points);
       setMuseData(data);
+      
+      // Also fetch WYDA balance
+      const balance = await getWYDABalance(address);
+      setWydaBalance(balance);
     } catch (err) {
       console.error("Failed to fetch points", err);
     }
@@ -362,97 +370,166 @@ export default function App() {
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:40px_40px]"></div>
       </div>
 
-      <header className="relative border-b border-[#333] p-6 flex flex-col md:flex-row justify-between items-center gap-4 bg-[#0a0a0a]/80 backdrop-blur-md sticky top-0 z-50">
+      <header className="relative border-b border-[#333] p-4 md:p-6 flex justify-between items-center gap-4 bg-[#0a0a0a]/80 backdrop-blur-md sticky top-0 z-50">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-[#00ff00] text-black rounded-sm">
-              <Trophy size={24} />
+              <Trophy size={20} className="md:w-6 md:h-6" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tighter uppercase italic">Source One Awards</h1>
-              <p className="text-[10px] text-[#888] uppercase tracking-widest">The Darwin Awards for the Digital Age</p>
+              <h1 className="text-lg md:text-xl font-bold tracking-tighter uppercase italic">Source One</h1>
+              <p className="hidden md:block text-[10px] text-[#888] uppercase tracking-widest">The Darwin Awards for the Digital Age</p>
             </div>
           </div>
 
-          <nav className="hidden md:flex items-center gap-2 bg-[#111] p-1 border border-[#333] rounded-sm">
-            <button 
-              onClick={() => setViewMode('awards')}
-              className={cn(
-                "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                viewMode === 'awards' ? "bg-[#00ff00] text-black" : "text-[#888] hover:text-white"
-              )}
-            >
-              <LayoutDashboard size={12} />
-              Awards
-            </button>
-            <button 
-              onClick={() => setViewMode('arcade')}
-              className={cn(
-                "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                viewMode === 'arcade' ? "bg-[#00ff00] text-black" : "text-[#888] hover:text-white"
-              )}
-            >
-              <Gamepad2 size={12} />
-              Arcade
-            </button>
-            <button 
-              onClick={() => setViewMode('markets')}
-              className={cn(
-                "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                viewMode === 'markets' ? "bg-[#00ff00] text-black" : "text-[#888] hover:text-white"
-              )}
-            >
-              <TrendingUp size={12} />
-              Markets
-            </button>
-            <button 
-              onClick={() => setViewMode('muse')}
-              className={cn(
-                "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                viewMode === 'muse' ? "bg-[#00ff00] text-black" : "text-[#888] hover:text-white"
-              )}
-            >
-              <Sparkles size={12} />
-              Muse
-            </button>
+          <nav className="hidden lg:flex items-center gap-2 bg-[#111] p-1 border border-[#333] rounded-sm">
+            {[
+              { id: 'awards', name: 'Awards', icon: LayoutDashboard },
+              { id: 'arcade', name: 'Arcade', icon: Gamepad2 },
+              { id: 'markets', name: 'Markets', icon: TrendingUp },
+              { id: 'muse', name: 'Muse', icon: Sparkles },
+            ].map(item => (
+              <button 
+                key={item.id}
+                onClick={() => setViewMode(item.id as ViewMode)}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
+                  viewMode === item.id ? "bg-[#00ff00] text-black" : "text-[#888] hover:text-white"
+                )}
+              >
+                <item.icon size={12} />
+                {item.name}
+              </button>
+            ))}
           </nav>
         </div>
 
-        <div className="flex items-center gap-4">
-          {walletAddress && (
-            <div className="flex items-center gap-2 bg-[#1a1a1a] border border-[#00ff00]/30 px-3 py-1.5 rounded-sm">
-              <Coins size={14} className="text-[#00ff00]" />
-              <span className="text-xs font-bold text-[#00ff00]">{ympPoints} YMP</span>
-            </div>
-          )}
-          {viewMode === 'awards' && (
-            <div className="flex items-center gap-2 bg-[#1a1a1a] border border-[#333] px-3 py-1 rounded-sm">
-              <span className="text-[10px] text-[#888] uppercase">Year:</span>
-              <select 
-                value={year} 
-                onChange={(e) => setYear(Number(e.target.value))}
-                className="bg-transparent border-none outline-none text-sm cursor-pointer"
-              >
-                {[2026, 2025, 2024, 2023].map(y => (
-                  <option key={y} value={y} className="bg-[#1a1a1a]">{y}</option>
-                ))}
-              </select>
-            </div>
-          )}
+        <div className="flex items-center gap-2 md:gap-4">
+          <div className="hidden sm:flex items-center gap-2">
+            {walletAddress && (
+              <>
+                <div className="flex items-center gap-2 bg-[#1a1a1a] border border-[#00ff00]/30 px-3 py-1.5 rounded-sm">
+                  <Coins size={14} className="text-[#00ff00]" />
+                  <span className="text-[10px] md:text-xs font-bold text-[#00ff00]">{ympPoints} YMP</span>
+                </div>
+                <div className="flex items-center gap-2 bg-[#1a1a1a] border border-[#ff00ff]/30 px-3 py-1.5 rounded-sm">
+                  <Zap size={14} className="text-[#ff00ff]" />
+                  <span className="text-[10px] md:text-xs font-bold text-[#ff00ff]">{parseFloat(wydaBalance).toFixed(2)} WYDA</span>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="hidden md:block">
+            {viewMode === 'awards' && (
+              <div className="flex items-center gap-2 bg-[#1a1a1a] border border-[#333] px-3 py-1 rounded-sm">
+                <span className="text-[10px] text-[#888] uppercase">Year:</span>
+                <select 
+                  value={year} 
+                  onChange={(e) => setYear(Number(e.target.value))}
+                  className="bg-transparent border-none outline-none text-sm cursor-pointer"
+                >
+                  {[2026, 2025, 2024, 2023].map(y => (
+                    <option key={y} value={y} className="bg-[#1a1a1a]">{y}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
 
           <button 
             onClick={handleConnect}
             className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-sm text-xs font-bold transition-all border",
+              "flex items-center gap-2 px-3 md:px-4 py-2 rounded-sm text-[10px] md:text-xs font-bold transition-all border",
               walletAddress 
                 ? "bg-transparent border-[#00ff00] text-[#00ff00]" 
                 : "bg-[#00ff00] text-black border-[#00ff00] hover:bg-transparent hover:text-[#00ff00]"
             )}
           >
             <Wallet size={14} />
-            {walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : "CONNECT WALLET"}
+            <span className="hidden sm:inline">{walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : "CONNECT"}</span>
+            <span className="sm:hidden">{walletAddress ? `${walletAddress.slice(0, 4)}...` : "CONNECT"}</span>
+          </button>
+
+          <button 
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="lg:hidden p-2 text-[#888] hover:text-white transition-colors"
+          >
+            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
         </div>
+
+        {/* Mobile Menu */}
+        <AnimatePresence>
+          {isMobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="absolute top-full left-0 right-0 bg-[#0a0a0a] border-b border-[#333] lg:hidden overflow-hidden z-50"
+            >
+              <div className="p-6 space-y-6">
+                <nav className="flex flex-col gap-2">
+                  {[
+                    { id: 'awards', name: 'Awards', icon: LayoutDashboard },
+                    { id: 'arcade', name: 'Arcade', icon: Gamepad2 },
+                    { id: 'markets', name: 'Markets', icon: TrendingUp },
+                    { id: 'muse', name: 'Muse', icon: Sparkles },
+                  ].map(item => (
+                    <button 
+                      key={item.id}
+                      onClick={() => {
+                        setViewMode(item.id as ViewMode);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={cn(
+                        "flex items-center gap-4 px-4 py-4 text-sm font-bold uppercase tracking-widest transition-all border border-[#333] rounded-sm",
+                        viewMode === item.id ? "bg-[#00ff00] text-black border-[#00ff00]" : "text-[#888] hover:text-white"
+                      )}
+                    >
+                      <item.icon size={18} />
+                      {item.name}
+                    </button>
+                  ))}
+                </nav>
+
+                {walletAddress && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1 p-4 bg-[#111] border border-[#333] rounded-sm">
+                      <span className="text-[10px] text-[#555] uppercase font-bold">YMP Points</span>
+                      <div className="flex items-center gap-2">
+                        <Coins size={14} className="text-[#00ff00]" />
+                        <span className="text-lg font-black text-[#00ff00]">{ympPoints}</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1 p-4 bg-[#111] border border-[#333] rounded-sm">
+                      <span className="text-[10px] text-[#555] uppercase font-bold">WYDA Balance</span>
+                      <div className="flex items-center gap-2">
+                        <Zap size={14} className="text-[#ff00ff]" />
+                        <span className="text-lg font-black text-[#ff00ff]">{parseFloat(wydaBalance).toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between p-4 bg-[#111] border border-[#333] rounded-sm">
+                  <span className="text-[10px] text-[#555] uppercase font-bold">Select Year</span>
+                  <div className="flex items-center gap-2">
+                    <select 
+                      value={year} 
+                      onChange={(e) => setYear(Number(e.target.value))}
+                      className="bg-transparent border-none outline-none text-sm font-bold cursor-pointer text-[#00ff00]"
+                    >
+                      {[2026, 2025, 2024, 2023].map(y => (
+                        <option key={y} value={y} className="bg-[#1a1a1a]">{y}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </header>
 
       <main className="max-w-5xl mx-auto p-6 space-y-12 pb-24">
