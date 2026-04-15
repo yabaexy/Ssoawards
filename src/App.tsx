@@ -2,12 +2,9 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-// src/lib/supabase.ts
-
-import { supabase } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";   // "motion/react" → 이렇게 변경
+import { motion, AnimatePresence } from "motion/react";
 import { 
   Trophy, 
   Cpu, 
@@ -104,69 +101,91 @@ export default function App() {
   const [museData, setMuseData] = useState<UserPoints | null>(null);
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
 
- const fetchCandidates = async (targetYear: number) => {
-  setLoading(true);
-  setError(null);
-
-  try {
-    const isAdminCheck = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
-
-    let query = supabase
-      .from("candidates")
-      .select("*")
-      .eq("year", targetYear)
-      .order("created_at", { ascending: true });
-
-    if (!isAdminCheck) {
-      query = query.eq("is_published", true);
+  const fetchCandidates = async (targetYear: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const isAdminCheck = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
+      const response = await fetch(`/api/candidates/${targetYear}?isAdmin=${isAdminCheck}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        let msg = errorData.message || errorData.error || "Failed to fetch candidates from database";
+        if (msg.includes("Could not find the table") || msg.includes("relation") && msg.includes("does not exist")) {
+          msg = "Database tables are missing. Please run the SQL script in 'supabase_schema.sql' in your Supabase SQL Editor.";
+        }
+        throw new Error(msg);
+      }
+      let data = await response.json();
+      
+      if (!data || data.length === 0) {
+        console.log(`No candidates found for ${targetYear}, generating...`);
+        data = await generateCandidates(targetYear);
+        
+        // Save to database for future use
+        try {
+          await fetch('/api/candidates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.map((c: any) => ({
+              name: c.name,
+              story: c.story,
+              reason: c.reason,
+              year: c.year,
+              image_url: c.image_url
+            })))
+          });
+        } catch (saveErr) {
+          console.error("Failed to save generated candidates:", saveErr);
+        }
+      }
+      
+      setCandidates(data);
+    } catch (err: any) {
+      console.error("Fetch error:", err);
+      setError(`Failed to fetch candidates: ${err.message}`);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const { data, error } = await query;
-    if (error) throw error;
+  const fetchTopics = async () => {
+    try {
+      const res = await fetch('/api/topics');
+      if (!res.ok) {
+        const errorData = await res.json();
+        if (errorData.error?.includes("Could not find the table")) {
+          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
+        }
+        throw new Error(errorData.error);
+      }
+      const data = await res.json();
+      setTopics(data);
+    } catch (err) {
+      console.error("Failed to fetch topics", err);
+    }
+  };
 
-    const finalData = data || [];
-    setCandidates(finalData);
-  } catch (err: any) {
-    setError(`Failed to fetch candidates: ${err.message}`);
-  } finally {
-    setLoading(false);
-  }
-};
-const fetchTopics = async () => {
-  try {
-    const { data, error } = await supabase
-      .from("topics")
-      .select(`
-        *,
-        votes (*)
-      `)
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-
-    setTopics(data || []);
-  } catch (err) {
-    console.error("Failed to fetch topics", err);
-  }
-};
-
-
-const fetchPoints = async (address: string) => {
-  try {
-    const { data, error } = await supabase
-      .from("user_points")
-      .select("*")
-      .eq("wallet_address", address)
-      .single();
-
-    if (error && error.code !== "PGRST116") throw error;
-
-    setYmpPoints(data?.points || 0);
-    setMuseData(data);
-  } catch (err) {
-    console.error("Failed to fetch points", err);
-  }
-};
+  const fetchPoints = async (address: string) => {
+    try {
+      const res = await fetch(`/api/points/${address}`);
+      if (!res.ok) {
+        const errorData = await res.json();
+        if (errorData.error?.includes("Could not find the table")) {
+          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
+        }
+        throw new Error(errorData.error);
+      }
+      const data = await res.json();
+      setYmpPoints(data.points);
+      setMuseData(data);
+      
+      // Also fetch WYDA balance
+      const balance = await getWYDABalance(address);
+      setWydaBalance(balance);
+    } catch (err) {
+      console.error("Failed to fetch points", err);
+    }
+  };
 
   useEffect(() => {
     if (viewMode === 'awards') fetchCandidates(year);
@@ -215,102 +234,116 @@ const fetchPoints = async (address: string) => {
   };
 
   const handleCreateTopic = async () => {
-  if (!walletAddress) return setError("Connect wallet");
-
-  try {
-    const { error } = await supabase.from("topics").insert({
-      ...newTopic,
-      creator_address: walletAddress,
-    });
-
-    if (error) throw error;
-
-    setShowCreateTopic(false);
-    setNewTopic({ title: "", description: "", options: ["", ""] });
-
-    fetchTopics();
-    setSuccess("Topic created!");
-  } catch (err: any) {
-    setError(err.message);
-  }
-};
-
-  const handleMarketVote = async (topicId: string, optionIndex: number) => {
-  if (!walletAddress) return setError("Connect wallet");
-
-  try {
-    const { error } = await supabase.from("votes").insert({
-      topic_id: topicId,
-      voter_address: walletAddress,
-      option_index: optionIndex,
-    });
-
-    if (error) throw error;
-
-    fetchTopics();
-    setSuccess("Vote cast!");
-  } catch (err: any) {
-    setError(err.message);
-  }
-};
-
-  const completeMission = async (missionId: string) => {
-  if (!walletAddress || !museData) return;
-
-  const rewards: Record<string, number> = {
-    market_vote: 450,
-    lp_provide: 1200,
-    play_games: 700,
+    if (!walletAddress) return setError("Connect wallet to create topic");
+    if (!newTopic.title || !newTopic.description) return setError("Fill all fields");
+    
+    try {
+      const res = await fetch('/api/topics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newTopic, creator_address: walletAddress })
+      });
+      if (!res.ok) throw new Error("Failed to create topic");
+      setShowCreateTopic(false);
+      setNewTopic({ title: '', description: '', options: ['', ''] });
+      fetchTopics();
+      setSuccess("Topic created successfully!");
+      
+      // Mission Check: Create Market Vote (simulated as creation for now)
+      completeMission('market_vote');
+    } catch (err: any) {
+      setError(err.message);
+    }
   };
 
-  const reward = rewards[missionId] || 0;
-  const nextPoints = ympPoints + reward;
-  const nextMissions = [...museData.completed_missions, missionId];
+  const handleMarketVote = async (topicId: string, optionIndex: number) => {
+    if (!walletAddress) return setError("Connect wallet to vote");
+    try {
+      const res = await fetch('/api/votes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: topicId, voter_address: walletAddress, option_index: optionIndex })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to vote");
+      }
+      fetchTopics();
+      setSuccess("Vote cast successfully!");
+      
+      // Mission Check
+      completeMission('market_vote');
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
-  const { error } = await supabase
-    .from("user_points")
-    .upsert({
-      wallet_address: walletAddress,
-      points: nextPoints,
-      muse_level: museData.muse_level || 1,
-      unlocked_skins: museData.unlocked_skins || ["default"],
-      current_skin: museData.current_skin || "default",
-      completed_missions: nextMissions,
-    });
+  const completeMission = async (missionId: string) => {
+    if (!walletAddress || !museData) return;
+    if (museData.completed_missions.includes(missionId)) return;
 
-  if (!error) {
-    setYmpPoints(nextPoints);
-    setMuseData({ ...museData, points: nextPoints, completed_missions: nextMissions });
-    setSuccess(`Mission Complete! +${reward} YMP`);
-  }
-};
+    const rewards: Record<string, number> = {
+      'market_vote': 450,
+      'lp_provide': 1200,
+      'play_games': 700
+    };
+
+    const reward = rewards[missionId] || 0;
+    const newPoints = ympPoints + reward;
+    const newMissions = [...museData.completed_missions, missionId];
+
+    try {
+      const res = await fetch('/api/muse/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          points: newPoints,
+          completed_missions: newMissions
+        })
+      });
+      if (res.ok) {
+        setYmpPoints(newPoints);
+        setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
+        setSuccess(`Mission Complete! +${reward} YMP`);
+      }
+    } catch (err) {
+      console.error("Failed to update mission", err);
+    }
+  };
 
   const handleResolve = async (topicId: string, winnerIndex: number) => {
-  const { error } = await supabase
-    .from("topics")
-    .update({
-      status: "resolved",
-      winner_index: winnerIndex
-    })
-    .eq("id", topicId);
-
-  if (!error) {
-    fetchTopics();
-    setSuccess("Resolved!");
-  }
-};
+    try {
+      const res = await fetch(`/api/topics/${topicId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ winner_index: winnerIndex })
+      });
+      if (!res.ok) throw new Error("Failed to resolve");
+      fetchTopics();
+      if (walletAddress) fetchPoints(walletAddress);
+      setSuccess("Topic resolved and points awarded!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
-  const { error } = await supabase
-    .from("candidates")
-    .update(updates)
-    .eq("id", id);
-
-  if (!error) {
-    fetchCandidates(year);
-    setEditingCandidate(null);
-  }
-};
+    if (!walletAddress) return;
+    try {
+      const res = await fetch(`/api/candidates/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...updates, adminAddress: walletAddress })
+      });
+      if (!res.ok) throw new Error("Failed to update candidate");
+      setEditingCandidate(null);
+      fetchCandidates(year);
+      setSuccess("Candidate updated successfully!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   const handleVote = async (candidate: Candidate) => {
     if (!walletAddress) {
