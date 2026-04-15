@@ -2,12 +2,9 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-// src/lib/supabase.ts
-
-import { supabase } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";   // "motion/react" → 이렇게 변경
+import { motion, AnimatePresence } from "motion/react";
 import { 
   Trophy, 
   Cpu, 
@@ -38,7 +35,8 @@ import {
   ArrowRightLeft,
   Droplets,
   Menu,
-  X
+  X,
+  ArrowDown
 } from "lucide-react";
 import { generateCandidates, type Candidate } from "./lib/gemini";
 import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity, getWYDABalance } from "./lib/web3";
@@ -52,7 +50,7 @@ import Tetris from "./components/games/Tetris";
 import Pong from "./components/games/Pong";
 import Sonoban from "./components/games/Sonoban";
 
-type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse';
+type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse' | 'swap';
 type GameType = 'reversi' | 'chess' | 'tetris' | 'pong' | 'sonoban';
 type MuseSubTab = 'main' | 'quests' | 'archive' | 'defi';
 
@@ -99,74 +97,97 @@ export default function App() {
   const [ympPoints, setYmpPoints] = useState(0);
   const [showCreateTopic, setShowCreateTopic] = useState(false);
   const [newTopic, setNewTopic] = useState({ title: '', description: '', options: ['', ''] });
+  const [swapAmount, setSwapAmount] = useState("10");
 
   // Muse State
   const [museData, setMuseData] = useState<UserPoints | null>(null);
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
 
- const fetchCandidates = async (targetYear: number) => {
-  setLoading(true);
-  setError(null);
-
-  try {
-    const isAdminCheck = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
-
-    let query = supabase
-      .from("candidates")
-      .select("*")
-      .eq("year", targetYear)
-      .order("created_at", { ascending: true });
-
-    if (!isAdminCheck) {
-      query = query.eq("is_published", true);
+  const fetchCandidates = async (targetYear: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const isAdminCheck = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
+      const response = await fetch(`/api/candidates/${targetYear}?isAdmin=${isAdminCheck}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        let msg = errorData.message || errorData.error || "Failed to fetch candidates from database";
+        if (msg.includes("Could not find the table") || msg.includes("relation") && msg.includes("does not exist")) {
+          msg = "Database tables are missing. Please run the SQL script in 'supabase_schema.sql' in your Supabase SQL Editor.";
+        }
+        throw new Error(msg);
+      }
+      let data = await response.json();
+      
+      if (!data || data.length === 0) {
+        console.log(`No candidates found for ${targetYear}, generating...`);
+        data = await generateCandidates(targetYear);
+        
+        // Save to database for future use
+        try {
+          await fetch('/api/candidates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data.map((c: any) => ({
+              name: c.name,
+              story: c.story,
+              reason: c.reason,
+              year: c.year,
+              image_url: c.image_url
+            })))
+          });
+        } catch (saveErr) {
+          console.error("Failed to save generated candidates:", saveErr);
+        }
+      }
+      
+      setCandidates(data);
+    } catch (err: any) {
+      console.error("Fetch error:", err);
+      setError(`Failed to fetch candidates: ${err.message}`);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const { data, error } = await query;
-    if (error) throw error;
+  const fetchTopics = async () => {
+    try {
+      const res = await fetch('/api/topics');
+      if (!res.ok) {
+        const errorData = await res.json();
+        if (errorData.error?.includes("Could not find the table")) {
+          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
+        }
+        throw new Error(errorData.error);
+      }
+      const data = await res.json();
+      setTopics(data);
+    } catch (err) {
+      console.error("Failed to fetch topics", err);
+    }
+  };
 
-    const finalData = data || [];
-    setCandidates(finalData);
-  } catch (err: any) {
-    setError(`Failed to fetch candidates: ${err.message}`);
-  } finally {
-    setLoading(false);
-  }
-};
-const fetchTopics = async () => {
-  try {
-    const { data, error } = await supabase
-      .from("topics")
-      .select(`
-        *,
-        votes (*)
-      `)
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-
-    setTopics(data || []);
-  } catch (err) {
-    console.error("Failed to fetch topics", err);
-  }
-};
-
-
-const fetchPoints = async (address: string) => {
-  try {
-    const { data, error } = await supabase
-      .from("user_points")
-      .select("*")
-      .eq("wallet_address", address)
-      .single();
-
-    if (error && error.code !== "PGRST116") throw error;
-
-    setYmpPoints(data?.points || 0);
-    setMuseData(data);
-  } catch (err) {
-    console.error("Failed to fetch points", err);
-  }
-};
+  const fetchPoints = async (address: string) => {
+    try {
+      const res = await fetch(`/api/points/${address}`);
+      if (!res.ok) {
+        const errorData = await res.json();
+        if (errorData.error?.includes("Could not find the table")) {
+          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
+        }
+        throw new Error(errorData.error);
+      }
+      const data = await res.json();
+      setYmpPoints(data.points);
+      setMuseData(data);
+      
+      // Also fetch WYDA balance
+      const balance = await getWYDABalance(address);
+      setWydaBalance(balance);
+    } catch (err) {
+      console.error("Failed to fetch points", err);
+    }
+  };
 
   useEffect(() => {
     if (viewMode === 'awards') fetchCandidates(year);
@@ -215,102 +236,116 @@ const fetchPoints = async (address: string) => {
   };
 
   const handleCreateTopic = async () => {
-  if (!walletAddress) return setError("Connect wallet");
-
-  try {
-    const { error } = await supabase.from("topics").insert({
-      ...newTopic,
-      creator_address: walletAddress,
-    });
-
-    if (error) throw error;
-
-    setShowCreateTopic(false);
-    setNewTopic({ title: "", description: "", options: ["", ""] });
-
-    fetchTopics();
-    setSuccess("Topic created!");
-  } catch (err: any) {
-    setError(err.message);
-  }
-};
-
-  const handleMarketVote = async (topicId: string, optionIndex: number) => {
-  if (!walletAddress) return setError("Connect wallet");
-
-  try {
-    const { error } = await supabase.from("votes").insert({
-      topic_id: topicId,
-      voter_address: walletAddress,
-      option_index: optionIndex,
-    });
-
-    if (error) throw error;
-
-    fetchTopics();
-    setSuccess("Vote cast!");
-  } catch (err: any) {
-    setError(err.message);
-  }
-};
-
-  const completeMission = async (missionId: string) => {
-  if (!walletAddress || !museData) return;
-
-  const rewards: Record<string, number> = {
-    market_vote: 450,
-    lp_provide: 1200,
-    play_games: 700,
+    if (!walletAddress) return setError("Connect wallet to create topic");
+    if (!newTopic.title || !newTopic.description) return setError("Fill all fields");
+    
+    try {
+      const res = await fetch('/api/topics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newTopic, creator_address: walletAddress })
+      });
+      if (!res.ok) throw new Error("Failed to create topic");
+      setShowCreateTopic(false);
+      setNewTopic({ title: '', description: '', options: ['', ''] });
+      fetchTopics();
+      setSuccess("Topic created successfully!");
+      
+      // Mission Check: Create Market Vote (simulated as creation for now)
+      completeMission('market_vote');
+    } catch (err: any) {
+      setError(err.message);
+    }
   };
 
-  const reward = rewards[missionId] || 0;
-  const nextPoints = ympPoints + reward;
-  const nextMissions = [...museData.completed_missions, missionId];
+  const handleMarketVote = async (topicId: string, optionIndex: number) => {
+    if (!walletAddress) return setError("Connect wallet to vote");
+    try {
+      const res = await fetch('/api/votes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: topicId, voter_address: walletAddress, option_index: optionIndex })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to vote");
+      }
+      fetchTopics();
+      setSuccess("Vote cast successfully!");
+      
+      // Mission Check
+      completeMission('market_vote');
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
-  const { error } = await supabase
-    .from("user_points")
-    .upsert({
-      wallet_address: walletAddress,
-      points: nextPoints,
-      muse_level: museData.muse_level || 1,
-      unlocked_skins: museData.unlocked_skins || ["default"],
-      current_skin: museData.current_skin || "default",
-      completed_missions: nextMissions,
-    });
+  const completeMission = async (missionId: string) => {
+    if (!walletAddress || !museData) return;
+    if (museData.completed_missions.includes(missionId)) return;
 
-  if (!error) {
-    setYmpPoints(nextPoints);
-    setMuseData({ ...museData, points: nextPoints, completed_missions: nextMissions });
-    setSuccess(`Mission Complete! +${reward} YMP`);
-  }
-};
+    const rewards: Record<string, number> = {
+      'market_vote': 450,
+      'lp_provide': 1200,
+      'play_games': 700
+    };
+
+    const reward = rewards[missionId] || 0;
+    const newPoints = ympPoints + reward;
+    const newMissions = [...museData.completed_missions, missionId];
+
+    try {
+      const res = await fetch('/api/muse/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          points: newPoints,
+          completed_missions: newMissions
+        })
+      });
+      if (res.ok) {
+        setYmpPoints(newPoints);
+        setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
+        setSuccess(`Mission Complete! +${reward} YMP`);
+      }
+    } catch (err) {
+      console.error("Failed to update mission", err);
+    }
+  };
 
   const handleResolve = async (topicId: string, winnerIndex: number) => {
-  const { error } = await supabase
-    .from("topics")
-    .update({
-      status: "resolved",
-      winner_index: winnerIndex
-    })
-    .eq("id", topicId);
-
-  if (!error) {
-    fetchTopics();
-    setSuccess("Resolved!");
-  }
-};
+    try {
+      const res = await fetch(`/api/topics/${topicId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ winner_index: winnerIndex })
+      });
+      if (!res.ok) throw new Error("Failed to resolve");
+      fetchTopics();
+      if (walletAddress) fetchPoints(walletAddress);
+      setSuccess("Topic resolved and points awarded!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
-  const { error } = await supabase
-    .from("candidates")
-    .update(updates)
-    .eq("id", id);
-
-  if (!error) {
-    fetchCandidates(year);
-    setEditingCandidate(null);
-  }
-};
+    if (!walletAddress) return;
+    try {
+      const res = await fetch(`/api/candidates/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...updates, adminAddress: walletAddress })
+      });
+      if (!res.ok) throw new Error("Failed to update candidate");
+      setEditingCandidate(null);
+      fetchCandidates(year);
+      setSuccess("Candidate updated successfully!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   const handleVote = async (candidate: Candidate) => {
     if (!walletAddress) {
@@ -356,6 +391,7 @@ const fetchPoints = async (address: string) => {
               { id: 'arcade', name: 'Arcade', icon: Gamepad2 },
               { id: 'markets', name: 'Markets', icon: TrendingUp },
               { id: 'muse', name: 'Muse', icon: Sparkles },
+              { id: 'swap', name: 'Swap', icon: ArrowRightLeft },
             ].map(item => (
               <button 
                 key={item.id}
@@ -461,6 +497,7 @@ const fetchPoints = async (address: string) => {
                     { id: 'arcade', name: 'Arcade', icon: Gamepad2 },
                     { id: 'markets', name: 'Markets', icon: TrendingUp },
                     { id: 'muse', name: 'Muse', icon: Sparkles },
+                    { id: 'swap', name: 'Swap', icon: ArrowRightLeft },
                   ].map(item => (
                     <button 
                       key={item.id}
@@ -939,6 +976,97 @@ const fetchPoints = async (address: string) => {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        ) : viewMode === 'swap' ? (
+          <div className="max-w-md mx-auto py-12 space-y-8">
+            <div className="text-center space-y-2">
+              <h2 className="text-3xl font-black tracking-tighter uppercase">WYDA Exchange</h2>
+              <p className="text-xs text-[#888] uppercase tracking-widest">Swap USDT for WYDA or provide liquidity on ApeSwap.</p>
+            </div>
+
+            <div className="bg-[#111] border border-[#333] p-6 rounded-sm space-y-6">
+              <div className="space-y-4">
+                <div className="flex justify-between items-end">
+                  <label className="text-[10px] font-bold text-[#555] uppercase">You Pay</label>
+                  <span className="text-[10px] text-[#00ff00] font-bold">1 USDT = 760.3 WYDA</span>
+                </div>
+                <div className="relative">
+                  <input 
+                    type="number" 
+                    value={swapAmount}
+                    onChange={(e) => setSwapAmount(e.target.value)}
+                    className="w-full bg-black border border-[#333] p-4 text-xl font-bold outline-none focus:border-[#00ff00] transition-colors"
+                  />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                    <span className="text-xs font-bold text-[#888]">USDT</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-center -my-2 relative z-10">
+                  <div className="p-1 bg-[#111] border border-[#333] rounded-full">
+                    <ArrowDown size={14} className="text-[#555]" />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-[#555] uppercase">You Receive (Est.)</label>
+                  <div className="p-4 bg-black/50 border border-[#333] flex justify-between items-center opacity-80">
+                    <span className="text-xl font-bold text-[#00ff00]">
+                      {(parseFloat(swapAmount || "0") * 760.3).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <span className="text-xs font-bold text-[#888]">WYDA</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                <button 
+                  onClick={() => handleSwap(swapAmount)}
+                  disabled={isProcessing}
+                  className="w-full py-4 bg-[#00ff00] text-black font-black uppercase tracking-widest hover:bg-white transition-all flex items-center justify-center gap-3"
+                >
+                  {isProcessing ? <RefreshCw className="animate-spin" size={18} /> : <ArrowRightLeft size={18} />}
+                  Swap USDT to WYDA
+                </button>
+              </div>
+
+              <div className="space-y-4 pt-6 border-t border-[#333]">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-[10px] font-bold text-[#555] uppercase tracking-widest">Quick LP Provision</h3>
+                  <span className="text-[9px] text-[#888] uppercase">ApeSwap Router</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[50, 80, 100, 200].map(amt => (
+                    <button 
+                      key={amt}
+                      onClick={() => handleAddLP(amt.toString())}
+                      disabled={isProcessing}
+                      className="flex items-center justify-between p-3 bg-black border border-[#333] hover:border-[#ff00ff] hover:bg-[#ff00ff]/5 transition-all group"
+                    >
+                      <div className="text-left">
+                        <div className="text-[8px] text-[#555] font-bold uppercase group-hover:text-[#ff00ff]">Add LP</div>
+                        <div className="text-sm font-bold group-hover:text-white">{amt} USDT</div>
+                      </div>
+                      <Plus size={14} className="text-[#333] group-hover:text-[#ff00ff]" />
+                    </button>
+                  ))}
+                </div>
+                <button 
+                  onClick={() => handleAddLP(swapAmount)}
+                  disabled={isProcessing}
+                  className="w-full py-3 border border-[#ff00ff]/30 text-[#ff00ff]/70 text-[10px] font-bold uppercase tracking-widest hover:bg-[#ff00ff]/10 hover:text-[#ff00ff] transition-all flex items-center justify-center gap-2"
+                >
+                  <Droplets size={14} />
+                  Custom LP: {swapAmount} USDT
+                </button>
+              </div>
+
+              <div className="p-4 bg-black/50 border border-[#333] rounded-sm">
+                <p className="text-[9px] text-[#555] leading-relaxed uppercase">
+                  Transactions are processed via ApeSwap Router on BSC. Rate is estimated at 1 USDT = 760.3 WYDA. Ensure you have sufficient USDT and BNB for gas.
+                </p>
+              </div>
             </div>
           </div>
         ) : (
