@@ -552,7 +552,7 @@ const fetchPoints = async (address: string) => {
                 Celebrating the <span className="text-[#00ff00]">Source Code</span> of Human Error.
               </h2>
               <p className="max-w-2xl text-[#888] text-sm leading-relaxed">
-                The Source One Awards honor those who have improved the human collective intelligence by removing themselves from the digital gene pool in spectacularly ill-advised technological ways.
+                Every year, a significant number of people die due to corporate crime. While some are simply victims, there are also cases where perpetrators meet such demise. We cover the stories of those who are dying as perpetrators.
               </p>
             </section>
 
