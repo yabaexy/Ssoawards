@@ -160,8 +160,24 @@ export default function App() {
     setLoading(false);
   }
 };
+const fetchTopics = async () => {
+  try {
+    const { data, error } = await supabase
+      .from("topics")
+      .select(`
+        *,
+        votes (*)
+      `)
+      .order("created_at", { ascending: false });
 
-const fetchTopic
+    if (error) throw error;
+
+    setTopics(data || []);
+  } catch (err) {
+    console.error("Failed to fetch topics", err);
+  }
+};
+
 
 const fetchPoints = async (address: string) => {
   try {
@@ -267,71 +283,55 @@ const fetchPoints = async (address: string) => {
 };
 
   const completeMission = async (missionId: string) => {
-    if (!walletAddress || !museData) return;
-    if (museData.completed_missions.includes(missionId)) return;
+  if (!walletAddress || !museData) return;
 
-    const rewards: Record<string, number> = {
-      'market_vote': 450,
-      'lp_provide': 1200,
-      'play_games': 700
-    };
-
-    const reward = rewards[missionId] || 0;
-    const newPoints = ympPoints + reward;
-    const newMissions = [...museData.completed_missions, missionId];
-
-    try {
-      const res = await fetch('/api/muse/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          wallet_address: walletAddress,
-          points: newPoints,
-          completed_missions: newMissions
-        })
-      });
-      if (res.ok) {
-        setYmpPoints(newPoints);
-        setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
-        setSuccess(`Mission Complete! +${reward} YMP`);
-      }
-    } catch (err) {
-      console.error("Failed to update mission", err);
-    }
+  const rewards: Record<string, number> = {
+    market_vote: 450,
+    lp_provide: 1200,
+    play_games: 700
   };
+
+  const reward = rewards[missionId] || 0;
+
+  const { error } = await supabase
+    .from("user_points")
+    .update({
+      points: ympPoints + reward,
+      completed_missions: [...museData.completed_missions, missionId]
+    })
+    .eq("wallet_address", walletAddress);
+
+  if (!error) {
+    setYmpPoints(ympPoints + reward);
+  }
+};
 
   const handleResolve = async (topicId: string, winnerIndex: number) => {
-    try {
-      const res = await fetch(`/api/topics/${topicId}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ winner_index: winnerIndex })
-      });
-      if (!res.ok) throw new Error("Failed to resolve");
-      fetchTopics();
-      if (walletAddress) fetchPoints(walletAddress);
-      setSuccess("Topic resolved and points awarded!");
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  const { error } = await supabase
+    .from("topics")
+    .update({
+      status: "resolved",
+      winner_index: winnerIndex
+    })
+    .eq("id", topicId);
+
+  if (!error) {
+    fetchTopics();
+    setSuccess("Resolved!");
+  }
+};
 
   const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
-    if (!walletAddress) return;
-    try {
-      const res = await fetch(`/api/candidates/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...updates, adminAddress: walletAddress })
-      });
-      if (!res.ok) throw new Error("Failed to update candidate");
-      setEditingCandidate(null);
-      fetchCandidates(year);
-      setSuccess("Candidate updated successfully!");
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  const { error } = await supabase
+    .from("candidates")
+    .update(updates)
+    .eq("id", id);
+
+  if (!error) {
+    fetchCandidates(year);
+    setEditingCandidate(null);
+  }
+};
 
   const handleVote = async (candidate: Candidate) => {
     if (!walletAddress) {
