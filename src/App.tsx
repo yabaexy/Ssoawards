@@ -31,10 +31,12 @@ import {
   Target,
   Shirt,
   Lock,
-  Zap
+  Zap,
+  ArrowRightLeft,
+  Droplets
 } from "lucide-react";
 import { generateCandidates, type Candidate } from "./lib/gemini";
-import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS } from "./lib/web3";
+import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity } from "./lib/web3";
 import { cn } from "./lib/utils";
 import type { DbTopic, UserPoints } from "./lib/supabase";
 
@@ -47,6 +49,7 @@ import Sonoban from "./components/games/Sonoban";
 
 type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse';
 type GameType = 'reversi' | 'chess' | 'tetris' | 'pong' | 'sonoban';
+type MuseSubTab = 'main' | 'quests' | 'archive' | 'defi';
 
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('awards');
@@ -72,6 +75,7 @@ export default function App() {
   const [votingId, setVotingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Markets State
   const [topics, setTopics] = useState<(DbTopic & { votes: any[] })[]>([]);
@@ -81,7 +85,7 @@ export default function App() {
 
   // Muse State
   const [museData, setMuseData] = useState<UserPoints | null>(null);
-  const [museSubTab, setMuseSubTab] = useState<'main' | 'quests' | 'archive'>('main');
+  const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
 
   const fetchCandidates = async (targetYear: number) => {
     setLoading(true);
@@ -180,6 +184,33 @@ export default function App() {
       setError(null);
     } catch (err: any) {
       setError(err.message || "Failed to connect wallet");
+    }
+  };
+
+  const handleSwap = async (amount: string) => {
+    if (!walletAddress) return setError("Connect wallet first");
+    setIsProcessing(true);
+    try {
+      await swapUSDTtoWYDA(amount);
+      setSuccess(`Successfully swapped ${amount} USDT to WYDA!`);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleAddLP = async (amount: string) => {
+    if (!walletAddress) return setError("Connect wallet first");
+    setIsProcessing(true);
+    try {
+      await addWYDALiquidity(amount);
+      setSuccess(`Successfully added ${amount} USDT worth of LP!`);
+      completeMission('lp_provide');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -740,10 +771,11 @@ export default function App() {
                 { id: 'main', name: 'My Muse', icon: User },
                 { id: 'quests', name: 'Quests', icon: Target },
                 { id: 'archive', name: 'Darwin Archive', icon: BookOpen },
+                { id: 'defi', name: 'DeFi Ops', icon: ArrowRightLeft },
               ].map(tab => (
                 <button
                   key={tab.id}
-                  onClick={() => setMuseSubTab(tab.id as any)}
+                  onClick={() => setMuseSubTab(tab.id as MuseSubTab)}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all",
                     museSubTab === tab.id ? "text-[#00ff00] border-b-2 border-[#00ff00]" : "text-[#555] hover:text-white"
@@ -825,6 +857,69 @@ export default function App() {
                         )}
                       </div>
                     ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {museSubTab === 'defi' && (
+              <div className="space-y-12 py-8">
+                <div className="space-y-6">
+                  <div className="flex items-center gap-4">
+                    <ArrowRightLeft size={20} className="text-[#00ff00]" />
+                    <h3 className="text-2xl font-black uppercase tracking-tighter">Token Swap</h3>
+                  </div>
+                  <div className="p-8 border border-[#333] bg-[#0a0a0a] space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-[#888] uppercase">From</p>
+                        <p className="text-xl font-bold">USDT</p>
+                      </div>
+                      <ArrowRightLeft className="text-[#555]" />
+                      <div className="space-y-1 text-right">
+                        <p className="text-[10px] text-[#888] uppercase">To</p>
+                        <p className="text-xl font-bold">7603 WYDA</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handleSwap("1")} // Example amount, user can adjust or we can add input
+                      disabled={isProcessing}
+                      className="w-full py-4 bg-[#00ff00] text-black font-black uppercase tracking-widest hover:bg-black hover:text-[#00ff00] border border-[#00ff00] transition-all disabled:opacity-50"
+                    >
+                      {isProcessing ? "Processing..." : "Swap USDT to WYDA"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="flex items-center gap-4">
+                    <Droplets size={20} className="text-[#00ff00]" />
+                    <h3 className="text-2xl font-black uppercase tracking-tighter">ApeSwap Liquidity</h3>
+                  </div>
+                  <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    {[50, 80, 100, 200].map(amount => (
+                      <div key={amount} className="p-6 border border-[#333] bg-[#0a0a0a] space-y-4 hover:border-[#00ff00] transition-all group">
+                        <div className="flex justify-between items-center">
+                          <span className="text-2xl font-black text-white group-hover:text-[#00ff00] transition-colors">${amount}</span>
+                          <span className="text-[9px] text-[#555] uppercase font-bold">USDT + WYDA</span>
+                        </div>
+                        <p className="text-[9px] text-[#888] uppercase leading-relaxed">
+                          Add liquidity to ApeSwap to earn YMP rewards and support the ecosystem.
+                        </p>
+                        <button 
+                          onClick={() => handleAddLP(amount.toString())}
+                          disabled={isProcessing}
+                          className="w-full py-3 border border-[#333] text-[10px] font-bold uppercase tracking-widest hover:border-[#00ff00] hover:text-[#00ff00] transition-all disabled:opacity-50"
+                        >
+                          {isProcessing ? "Adding..." : `Add $${amount} LP`}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="p-4 bg-[#111] border-l-4 border-[#00ff00]">
+                    <p className="text-[10px] text-[#888] uppercase leading-relaxed">
+                      <span className="text-[#00ff00] font-bold">Note:</span> Adding LP requires both USDT and WYDA in your wallet. The app will automatically calculate and approve the required amounts.
+                    </p>
                   </div>
                 </div>
               </div>
