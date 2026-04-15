@@ -144,14 +144,44 @@ async function startServer() {
       const { address } = req.params;
       const { data, error } = await supabase
         .from('user_points')
-        .select('points')
+        .select('*')
         .eq('wallet_address', address.toLowerCase())
         .single();
       
       if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "no rows found"
-      res.json({ points: data?.points || 0 });
+      
+      if (!data) {
+        return res.json({ 
+          points: 0, 
+          muse_level: 1, 
+          unlocked_skins: ['default'], 
+          current_skin: 'default',
+          completed_missions: []
+        });
+      }
+      res.json(data);
     } catch (error: any) {
       logError("Get Points Error", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/muse/update", async (req, res) => {
+    if (!checkEnv()) return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
+    try {
+      const { wallet_address, ...updates } = req.body;
+      const addr = wallet_address.toLowerCase();
+
+      const { data, error } = await supabase
+        .from('user_points')
+        .upsert({ wallet_address: addr, ...updates })
+        .select()
+        .single();
+
+      if (error) throw error;
+      res.json(data);
+    } catch (error: any) {
+      logError("Update Muse Error", error);
       res.status(500).json({ error: error.message });
     }
   });

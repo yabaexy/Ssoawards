@@ -42,6 +42,10 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
  * Columns:
  * - wallet_address: text (primary key)
  * - points: int4 (default: 0)
+ * - muse_level: int4 (default: 1)
+ * - unlocked_skins: jsonb (default: '["default"]')
+ * - current_skin: text (default: 'default')
+ * - completed_missions: jsonb (default: '[]')
  */
 export interface DbCandidate {
   id: string;
@@ -76,4 +80,8 @@ export interface DbVote {
 export interface UserPoints {
   wallet_address: string;
   points: number;
+  muse_level: number;
+  unlocked_skins: string[];
+  current_skin: string;
+  completed_missions: string[];
 }

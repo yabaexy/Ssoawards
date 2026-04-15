@@ -25,12 +25,18 @@ import {
   CheckCircle2,
   Coins,
   TrendingUp,
-  MessageSquare
+  MessageSquare,
+  Sparkles,
+  BookOpen,
+  Target,
+  Shirt,
+  Lock,
+  Zap
 } from "lucide-react";
 import { generateCandidates, type Candidate } from "./lib/gemini";
 import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS } from "./lib/web3";
 import { cn } from "./lib/utils";
-import type { DbTopic } from "./lib/supabase";
+import type { DbTopic, UserPoints } from "./lib/supabase";
 
 // Game Components
 import Reversi from "./components/games/Reversi";
@@ -39,12 +45,26 @@ import Tetris from "./components/games/Tetris";
 import Pong from "./components/games/Pong";
 import Sonoban from "./components/games/Sonoban";
 
-type ViewMode = 'awards' | 'arcade' | 'markets';
+type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse';
 type GameType = 'reversi' | 'chess' | 'tetris' | 'pong' | 'sonoban';
 
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('awards');
   const [activeGame, setActiveGame] = useState<GameType>('sonoban');
+  const [gamesPlayed, setGamesPlayed] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (viewMode === 'arcade') {
+      setGamesPlayed(prev => {
+        const next = new Set(prev);
+        next.add(activeGame);
+        if (next.size >= 3) {
+          completeMission('play_games');
+        }
+        return next;
+      });
+    }
+  }, [activeGame, viewMode]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +78,10 @@ export default function App() {
   const [ympPoints, setYmpPoints] = useState(0);
   const [showCreateTopic, setShowCreateTopic] = useState(false);
   const [newTopic, setNewTopic] = useState({ title: '', description: '', options: ['', ''] });
+
+  // Muse State
+  const [museData, setMuseData] = useState<UserPoints | null>(null);
+  const [museSubTab, setMuseSubTab] = useState<'main' | 'quests' | 'archive'>('main');
 
   const fetchCandidates = async (targetYear: number) => {
     setLoading(true);
@@ -116,6 +140,7 @@ export default function App() {
       const res = await fetch(`/api/points/${address}`);
       const data = await res.json();
       setYmpPoints(data.points);
+      setMuseData(data);
     } catch (err) {
       console.error("Failed to fetch points", err);
     }
@@ -155,6 +180,9 @@ export default function App() {
       setNewTopic({ title: '', description: '', options: ['', ''] });
       fetchTopics();
       setSuccess("Topic created successfully!");
+      
+      // Mission Check: Create Market Vote (simulated as creation for now)
+      completeMission('market_vote');
     } catch (err: any) {
       setError(err.message);
     }
@@ -174,8 +202,45 @@ export default function App() {
       }
       fetchTopics();
       setSuccess("Vote cast successfully!");
+      
+      // Mission Check
+      completeMission('market_vote');
     } catch (err: any) {
       setError(err.message);
+    }
+  };
+
+  const completeMission = async (missionId: string) => {
+    if (!walletAddress || !museData) return;
+    if (museData.completed_missions.includes(missionId)) return;
+
+    const rewards: Record<string, number> = {
+      'market_vote': 450,
+      'lp_provide': 1200,
+      'play_games': 700
+    };
+
+    const reward = rewards[missionId] || 0;
+    const newPoints = ympPoints + reward;
+    const newMissions = [...museData.completed_missions, missionId];
+
+    try {
+      const res = await fetch('/api/muse/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          points: newPoints,
+          completed_missions: newMissions
+        })
+      });
+      if (res.ok) {
+        setYmpPoints(newPoints);
+        setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
+        setSuccess(`Mission Complete! +${reward} YMP`);
+      }
+    } catch (err) {
+      console.error("Failed to update mission", err);
     }
   };
 
@@ -263,6 +328,16 @@ export default function App() {
             >
               <TrendingUp size={12} />
               Markets
+            </button>
+            <button 
+              onClick={() => setViewMode('muse')}
+              className={cn(
+                "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
+                viewMode === 'muse' ? "bg-[#00ff00] text-black" : "text-[#888] hover:text-white"
+              )}
+            >
+              <Sparkles size={12} />
+              Muse
             </button>
           </nav>
         </div>
@@ -496,7 +571,7 @@ export default function App() {
                </AnimatePresence>
             </section>
           </div>
-        ) : (
+        ) : viewMode === 'markets' ? (
           <div className="space-y-8 py-8">
             <div className="flex justify-between items-center border-b border-[#333] pb-6">
               <div>
@@ -638,6 +713,219 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </div>
+        ) : (
+          <div className="space-y-8 py-8">
+            {/* Muse Sub-Navigation */}
+            <div className="flex gap-4 border-b border-[#333] pb-4">
+              {[
+                { id: 'main', name: 'My Muse', icon: User },
+                { id: 'quests', name: 'Quests', icon: Target },
+                { id: 'archive', name: 'Darwin Archive', icon: BookOpen },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setMuseSubTab(tab.id as any)}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 text-[10px] font-bold uppercase tracking-widest transition-all",
+                    museSubTab === tab.id ? "text-[#00ff00] border-b-2 border-[#00ff00]" : "text-[#555] hover:text-white"
+                  )}
+                >
+                  <tab.icon size={14} />
+                  {tab.name}
+                </button>
+              ))}
+            </div>
+
+            {museSubTab === 'main' && (
+              <div className="grid md:grid-cols-[1fr_300px] gap-12 items-center py-12">
+                <div className="relative group">
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="relative aspect-[3/4] max-w-md mx-auto overflow-hidden border-2 border-[#00ff00]/30 rounded-sm bg-[#111]"
+                  >
+                    <img 
+                      src="https://ais-dev-qau7wudkrtj24cq2qgvekw-50569269219.asia-northeast1.run.app/api/assets/muse_base.png" 
+                      alt="Muse" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        // Fallback if the direct URL doesn't work in preview
+                        (e.target as HTMLImageElement).src = "https://picsum.photos/seed/muse/800/1200";
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                    
+                    <div className="absolute bottom-8 left-8 right-8 space-y-4">
+                      <div className="flex justify-between items-end">
+                        <div>
+                          <p className="text-[10px] text-[#00ff00] font-bold uppercase tracking-[0.2em]">Unsource One Muse</p>
+                          <h3 className="text-4xl font-black tracking-tighter uppercase">Level {museData?.muse_level || 1}</h3>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-[#555] uppercase">Balance</p>
+                          <p className="text-2xl font-bold text-[#00ff00]">{ympPoints} YMP</p>
+                        </div>
+                      </div>
+                      <div className="h-1 w-full bg-[#333] rounded-full overflow-hidden">
+                        <div className="h-full bg-[#00ff00] transition-all" style={{ width: '45%' }} />
+                      </div>
+                    </div>
+                  </motion.div>
+                </div>
+
+                <div className="space-y-6">
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-[#888] border-l-2 border-[#00ff00] pl-3">Today's Missions</h4>
+                  <div className="grid gap-4">
+                    {[
+                      { id: 'market_vote', title: 'Market Participation', reward: 450, desc: 'Vote 2 times in Create Market' },
+                      { id: 'lp_provide', title: 'Liquidity Provider', reward: 1200, desc: 'Provide $100+ WYDA-USDT LP' },
+                      { id: 'play_games', title: 'Arcade Master', reward: 700, desc: 'Play 3+ mini-games' },
+                    ].map(mission => (
+                      <div key={mission.id} className={cn(
+                        "p-4 border border-[#333] bg-[#0a0a0a] transition-all",
+                        museData?.completed_missions.includes(mission.id) ? "border-[#00ff00]/50 opacity-50" : "hover:border-[#555]"
+                      )}>
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-[10px] font-bold uppercase tracking-tight">{mission.title}</span>
+                          <span className="text-[10px] text-[#00ff00] font-bold">+{mission.reward} YMP</span>
+                        </div>
+                        <p className="text-[10px] text-[#555] uppercase mb-3">{mission.desc}</p>
+                        {museData?.completed_missions.includes(mission.id) ? (
+                          <div className="flex items-center gap-2 text-[#00ff00] text-[9px] font-bold uppercase">
+                            <CheckCircle2 size={12} />
+                            Completed
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={() => setViewMode(mission.id === 'play_games' ? 'arcade' : 'markets')}
+                            className="text-[9px] text-white underline uppercase hover:text-[#00ff00]"
+                          >
+                            Go to Mission
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {museSubTab === 'quests' && (
+              <div className="space-y-12 py-8">
+                <div className="space-y-6">
+                  <div className="flex items-center gap-4">
+                    <Zap size={20} className="text-[#00ff00]" />
+                    <h3 className="text-2xl font-black uppercase tracking-tighter">Daily Missions</h3>
+                  </div>
+                  <div className="grid md:grid-cols-3 gap-6">
+                    {[
+                      { id: 'market_vote', title: 'Market Vote', reward: 450, icon: TrendingUp },
+                      { id: 'lp_provide', title: 'LP Provider', reward: 1200, icon: Coins },
+                      { id: 'play_games', title: 'Game Play', reward: 700, icon: Gamepad2 },
+                    ].map(q => (
+                      <div key={q.id} className="p-6 border border-[#333] bg-[#0a0a0a] space-y-4">
+                        <q.icon size={24} className="text-[#555]" />
+                        <div>
+                          <h4 className="text-sm font-bold uppercase">{q.title}</h4>
+                          <p className="text-[10px] text-[#00ff00] font-bold">Reward: {q.reward} YMP</p>
+                        </div>
+                        <button 
+                          disabled={museData?.completed_missions.includes(q.id)}
+                          className="w-full py-2 border border-[#333] text-[9px] uppercase font-bold hover:border-[#00ff00] disabled:opacity-30"
+                        >
+                          {museData?.completed_missions.includes(q.id) ? 'Claimed' : 'Start Quest'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="flex items-center gap-4">
+                    <Trophy size={20} className="text-[#00ff00]" />
+                    <h3 className="text-2xl font-black uppercase tracking-tighter">Weekly Challenge</h3>
+                  </div>
+                  <div className="p-8 border-2 border-dashed border-[#333] bg-[#0a0a0a] flex flex-col md:flex-row justify-between items-center gap-8">
+                    <div className="space-y-2">
+                      <h4 className="text-lg font-bold uppercase">The Ultimate Muse Growth</h4>
+                      <p className="text-xs text-[#555] max-w-md">
+                        Complete 5+ Market participations + Provide 1,200+ WYDA LP this week.
+                      </p>
+                      <div className="flex gap-4 pt-4">
+                        <div className="flex items-center gap-2 text-[#00ff00] text-[10px] font-bold uppercase">
+                          <Coins size={14} /> 10,000 YMP
+                        </div>
+                        <div className="flex items-center gap-2 text-[#00ff00] text-[10px] font-bold uppercase">
+                          <Shirt size={14} /> Special Outfit
+                        </div>
+                      </div>
+                    </div>
+                    <div className="w-full md:w-48 h-2 bg-[#111] rounded-full overflow-hidden">
+                      <div className="h-full bg-[#00ff00] transition-all" style={{ width: '20%' }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {museSubTab === 'archive' && (
+              <div className="grid md:grid-cols-[1fr_350px] gap-12 py-8">
+                <div className="space-y-8">
+                  <div className="flex items-center gap-4">
+                    <ShieldAlert size={20} className="text-[#ff4444]" />
+                    <h3 className="text-2xl font-black uppercase tracking-tighter">Darwin Archive</h3>
+                  </div>
+                  <div className="grid gap-6">
+                    {[
+                      { name: 'Seo Se-won', crime: 'Unauthorized Business', lesson: 'Avoid unauthorized business ventures at all costs.', reward: '3,000 YMP + Badge' },
+                      { name: 'Kim Ki-duk', crime: 'Exploitation', lesson: 'Never exploit others for your own gain.', reward: '4,000 YMP + Skin' },
+                      { name: 'Stockton Rush', crime: 'Safety Neglect', lesson: 'Safety is not a luxury, it is a requirement.', reward: '5,000 YMP + Frame' },
+                    ].map((item, i) => (
+                      <div key={i} className="group p-6 border border-[#333] bg-[#0a0a0a] hover:border-[#ff4444]/50 transition-all">
+                        <div className="flex justify-between items-start mb-4">
+                          <h4 className="text-lg font-bold uppercase text-[#ff4444]">{item.name}</h4>
+                          <span className="text-[9px] bg-[#ff4444]/10 text-[#ff4444] px-2 py-0.5 border border-[#ff4444]/30 uppercase font-bold">{item.crime}</span>
+                        </div>
+                        <p className="text-xs text-[#888] mb-4 italic">"{item.lesson}"</p>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] text-[#555] uppercase">Achievement Reward:</span>
+                          <span className="text-[10px] text-[#00ff00] font-bold uppercase">{item.reward}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-8">
+                  <div className="flex items-center gap-4">
+                    <Shirt size={20} className="text-[#00ff00]" />
+                    <h3 className="text-2xl font-black uppercase tracking-tighter">Customization</h3>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    {[
+                      { id: 'default', name: 'Default', unlocked: true },
+                      { id: 'bronze', name: 'Bronze Skin', unlocked: false, cost: 5000 },
+                      { id: 'silver', name: 'Silver Skin', unlocked: false, cost: 15000 },
+                      { id: 'gold', name: 'Gold Skin', unlocked: false, cost: 50000 },
+                    ].map(skin => (
+                      <button 
+                        key={skin.id}
+                        className={cn(
+                          "aspect-square border border-[#333] bg-[#111] p-4 flex flex-col items-center justify-center gap-2 transition-all",
+                          skin.unlocked ? "hover:border-[#00ff00]" : "opacity-50 cursor-not-allowed"
+                        )}
+                      >
+                        {skin.unlocked ? <Shirt size={24} className="text-[#00ff00]" /> : <Lock size={24} className="text-[#444]" />}
+                        <span className="text-[9px] font-bold uppercase">{skin.name}</span>
+                        {!skin.unlocked && <span className="text-[8px] text-[#00ff00]">{skin.cost} YMP</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
