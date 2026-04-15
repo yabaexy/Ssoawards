@@ -2,111 +2,209 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { put } from "@vercel/blob";
-import { GoogleGenAI, Type } from "@google/genai";
 import { supabase } from "./src/lib/supabase";
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
   app.use(express.json());
 
+  // Check for required environment variables
+  const checkEnv = () => {
+    const missing = [];
+    if (!process.env.SUPABASE_URL) missing.push("SUPABASE_URL");
+    if (!process.env.SUPABASE_ANON_KEY) missing.push("SUPABASE_ANON_KEY");
+    if (missing.length > 0) {
+      console.error(`CRITICAL: Missing environment variables: ${missing.join(", ")}`);
+      return false;
+    }
+    return true;
+  };
+
+  const logError = (context: string, error: any) => {
+    console.error(`[${context}]`, {
+      message: error.message,
+      details: error.details || error.hint || "No additional details",
+      code: error.code || "No error code",
+      stack: error.stack
+    });
+  };
+
   // API Routes
   app.get("/api/candidates/:year", async (req, res) => {
+    if (!checkEnv()) {
+      return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
+    }
     const year = parseInt(req.params.year);
     
     try {
-      // 1. Check Supabase first
       const { data: existing, error: fetchError } = await supabase
         .from('candidates')
         .select('*')
         .eq('year', year);
 
       if (fetchError) throw fetchError;
-
-      if (existing && existing.length > 0) {
-        return res.json(existing);
-      }
-
-      // 2. If not found, generate with Gemini
-      console.log(`Generating candidates for ${year}...`);
-      const prompt = `Generate 5 parody "Source One Awards" candidates for the year ${year}. 
-      The Source One Awards are a parody of the Darwin Awards, specifically focusing on people who did something incredibly stupid related to technology, coding, or "source code".
-      Return JSON with fields: name, story, reason.`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash-exp",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                name: { type: Type.STRING },
-                story: { type: Type.STRING },
-                reason: { type: Type.STRING },
-              },
-              required: ["name", "story", "reason"],
-            },
-          },
-        },
+      res.json(existing || []);
+    } catch (error: any) {
+      logError("API Fetch Error", error);
+      res.status(500).json({ 
+        error: "Database Error", 
+        message: error.message || "Failed to fetch candidates",
+        details: error.details || null
       });
+    }
+  });
 
-      const rawCandidates = JSON.parse(response.text || "[]");
-      const processedCandidates = [];
-
-      for (const candidate of rawCandidates) {
-        // 3. Generate Image for each candidate
-        let imageUrl = "";
-        try {
-          console.log(`Generating image for ${candidate.name}...`);
-          const imgResponse = await ai.models.generateContent({
-            model: "gemini-2.0-flash-exp", // Using flash for speed, or imagen if available
-            contents: [{ 
-              role: "user", 
-              parts: [{ text: `A funny, high-quality 3D cartoon illustration of a person doing something stupid: ${candidate.story}. Cinematic lighting, vibrant colors.` }] 
-            }],
-          });
-          
-          // Note: In a real scenario, you'd use an image generation model. 
-          // Since we are using text models here, let's assume we have a placeholder or a real image gen call.
-          // For this demo, we'll use a placeholder if image gen isn't directly supported in this SDK version for images.
-          // However, the user asked for Vercel Blob, so I'll simulate the upload.
-          
-          // Simulate image data (e.g., from a real image gen API)
-          const dummyImageBuffer = Buffer.from("dummy-image-data");
-          const blob = await put(`candidates/${year}/${candidate.name.replace(/\s+/g, '_')}.png`, dummyImageBuffer, {
-            access: 'public',
-            token: process.env.BLOB_READ_WRITE_TOKEN
-          });
-          imageUrl = blob.url;
-        } catch (imgErr) {
-          console.error("Image gen/upload failed:", imgErr);
-          imageUrl = `https://picsum.photos/seed/${candidate.name}/800/600`;
-        }
-
-        processedCandidates.push({
-          ...candidate,
-          year,
-          image_url: imageUrl
-        });
-      }
-
-      // 4. Save to Supabase
-      const { data: inserted, error: insertError } = await supabase
+  app.post("/api/candidates", async (req, res) => {
+    if (!checkEnv()) {
+      return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
+    }
+    try {
+      const candidates = req.body;
+      const { data, error: insertError } = await supabase
         .from('candidates')
-        .insert(processedCandidates)
+        .insert(candidates)
         .select();
 
       if (insertError) throw insertError;
+      res.json(data);
+    } catch (error: any) {
+      logError("API Save Error", error);
+      res.status(500).json({ 
+        error: "Database Error", 
+        message: error.message || "Failed to save candidates",
+        details: error.details || null
+      });
+    }
+  });
 
-      res.json(inserted);
-    } catch (error) {
-      console.error("API Error:", error);
-      res.status(500).json({ error: "Internal Server Error" });
+  // Markets API
+  app.get("/api/topics", async (req, res) => {
+    if (!checkEnv()) return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
+    try {
+      const { data, error } = await supabase
+        .from('topics')
+        .select('*, votes(*)');
+      if (error) throw error;
+      res.json(data);
+    } catch (error: any) {
+      logError("Get Topics Error", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/topics", async (req, res) => {
+    if (!checkEnv()) return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
+    try {
+      const { title, description, options, creator_address } = req.body;
+      const { data, error } = await supabase
+        .from('topics')
+        .insert([{ title, description, options, creator_address, status: 'open' }])
+        .select();
+      if (error) throw error;
+      res.json(data[0]);
+    } catch (error: any) {
+      logError("Post Topic Error", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/votes", async (req, res) => {
+    if (!checkEnv()) return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
+    try {
+      const { topic_id, voter_address, option_index } = req.body;
+      
+      // Check if already voted
+      const { data: existing } = await supabase
+        .from('votes')
+        .select('*')
+        .eq('topic_id', topic_id)
+        .eq('voter_address', voter_address);
+      
+      if (existing && existing.length > 0) {
+        return res.status(400).json({ error: "Already voted on this topic" });
+      }
+
+      const { data, error } = await supabase
+        .from('votes')
+        .insert([{ topic_id, voter_address, option_index }])
+        .select();
+      if (error) throw error;
+      res.json(data[0]);
+    } catch (error: any) {
+      logError("Post Vote Error", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/points/:address", async (req, res) => {
+    if (!checkEnv()) return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
+    try {
+      const { address } = req.params;
+      const { data, error } = await supabase
+        .from('user_points')
+        .select('points')
+        .eq('wallet_address', address.toLowerCase())
+        .single();
+      
+      if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "no rows found"
+      res.json({ points: data?.points || 0 });
+    } catch (error: any) {
+      logError("Get Points Error", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/topics/:id/resolve", async (req, res) => {
+    if (!checkEnv()) return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
+    try {
+      const { id } = req.params;
+      const { winner_index } = req.body;
+
+      // 1. Update topic status
+      const { data: topic, error: topicError } = await supabase
+        .from('topics')
+        .update({ status: 'resolved', winner_index })
+        .eq('id', id)
+        .select()
+        .single();
+      
+      if (topicError) throw topicError;
+
+      // 2. Find winners
+      const { data: winners, error: votesError } = await supabase
+        .from('votes')
+        .select('voter_address')
+        .eq('topic_id', id)
+        .eq('option_index', winner_index);
+      
+      if (votesError) throw votesError;
+
+      // 3. Award points (3800 YMP)
+      if (winners && winners.length > 0) {
+        for (const winner of winners) {
+          const addr = winner.voter_address.toLowerCase();
+          
+          // Get current points
+          const { data: current } = await supabase
+            .from('user_points')
+            .select('points')
+            .eq('wallet_address', addr)
+            .single();
+          
+          const newPoints = (current?.points || 0) + 3800;
+          
+          await supabase
+            .from('user_points')
+            .upsert({ wallet_address: addr, points: newPoints });
+        }
+      }
+
+      res.json({ success: true, awarded_to: winners?.length || 0 });
+    } catch (error: any) {
+      logError("Resolve Topic Error", error);
+      res.status(500).json({ error: error.message });
     }
   });
 

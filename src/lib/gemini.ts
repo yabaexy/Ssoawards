@@ -25,7 +25,7 @@ export async function generateCandidates(year: number): Promise<Candidate[]> {
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-3-flash-preview",
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
         responseMimeType: "application/json",
@@ -49,6 +49,7 @@ export async function generateCandidates(year: number): Promise<Candidate[]> {
       id: index + 1,
       ...item,
       year,
+      image_url: `https://picsum.photos/seed/${encodeURIComponent(item.name)}/800/600`
     }));
   } catch (error) {
     console.error("Error generating candidates:", error);
