@@ -1210,7 +1210,7 @@ export default function App() {
 <<<<<<< HEAD
                         <p className="text-xl font-bold">763 WYDA</p>
 =======
-                        <p className="text-xl font-bold">7603 WYDA</p>
+                        <p className="text-xl font-bold">763 WYDA</p>
 >>>>>>> d0d189a2867b9670e8cb905513e0918db2364e22
                       </div>
                     </div>
