@@ -35,7 +35,8 @@ import {
   ArrowRightLeft,
   Droplets,
   Menu,
-  X
+  X,
+  ArrowDown
 } from "lucide-react";
 import { generateCandidates, type Candidate } from "./lib/gemini";
 import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity, getWYDABalance } from "./lib/web3";
@@ -49,7 +50,7 @@ import Tetris from "./components/games/Tetris";
 import Pong from "./components/games/Pong";
 import Sonoban from "./components/games/Sonoban";
 
-type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse';
+type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse' | 'swap';
 type GameType = 'reversi' | 'chess' | 'tetris' | 'pong' | 'sonoban';
 type MuseSubTab = 'main' | 'quests' | 'archive' | 'defi';
 
@@ -96,6 +97,7 @@ export default function App() {
   const [ympPoints, setYmpPoints] = useState(0);
   const [showCreateTopic, setShowCreateTopic] = useState(false);
   const [newTopic, setNewTopic] = useState({ title: '', description: '', options: ['', ''] });
+  const [swapAmount, setSwapAmount] = useState("10");
 
   // Muse State
   const [museData, setMuseData] = useState<UserPoints | null>(null);
@@ -389,6 +391,7 @@ export default function App() {
               { id: 'arcade', name: 'Arcade', icon: Gamepad2 },
               { id: 'markets', name: 'Markets', icon: TrendingUp },
               { id: 'muse', name: 'Muse', icon: Sparkles },
+              { id: 'swap', name: 'Swap', icon: ArrowRightLeft },
             ].map(item => (
               <button 
                 key={item.id}
@@ -494,6 +497,7 @@ export default function App() {
                     { id: 'arcade', name: 'Arcade', icon: Gamepad2 },
                     { id: 'markets', name: 'Markets', icon: TrendingUp },
                     { id: 'muse', name: 'Muse', icon: Sparkles },
+                    { id: 'swap', name: 'Swap', icon: ArrowRightLeft },
                   ].map(item => (
                     <button 
                       key={item.id}
@@ -972,6 +976,97 @@ export default function App() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        ) : viewMode === 'swap' ? (
+          <div className="max-w-md mx-auto py-12 space-y-8">
+            <div className="text-center space-y-2">
+              <h2 className="text-3xl font-black tracking-tighter uppercase">WYDA Exchange</h2>
+              <p className="text-xs text-[#888] uppercase tracking-widest">Swap USDT for WYDA or provide liquidity on ApeSwap.</p>
+            </div>
+
+            <div className="bg-[#111] border border-[#333] p-6 rounded-sm space-y-6">
+              <div className="space-y-4">
+                <div className="flex justify-between items-end">
+                  <label className="text-[10px] font-bold text-[#555] uppercase">You Pay</label>
+                  <span className="text-[10px] text-[#00ff00] font-bold">1 USDT = 760.3 WYDA</span>
+                </div>
+                <div className="relative">
+                  <input 
+                    type="number" 
+                    value={swapAmount}
+                    onChange={(e) => setSwapAmount(e.target.value)}
+                    className="w-full bg-black border border-[#333] p-4 text-xl font-bold outline-none focus:border-[#00ff00] transition-colors"
+                  />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                    <span className="text-xs font-bold text-[#888]">USDT</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-center -my-2 relative z-10">
+                  <div className="p-1 bg-[#111] border border-[#333] rounded-full">
+                    <ArrowDown size={14} className="text-[#555]" />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-[#555] uppercase">You Receive (Est.)</label>
+                  <div className="p-4 bg-black/50 border border-[#333] flex justify-between items-center opacity-80">
+                    <span className="text-xl font-bold text-[#00ff00]">
+                      {(parseFloat(swapAmount || "0") * 760.3).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <span className="text-xs font-bold text-[#888]">WYDA</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                <button 
+                  onClick={() => handleSwap(swapAmount)}
+                  disabled={isProcessing}
+                  className="w-full py-4 bg-[#00ff00] text-black font-black uppercase tracking-widest hover:bg-white transition-all flex items-center justify-center gap-3"
+                >
+                  {isProcessing ? <RefreshCw className="animate-spin" size={18} /> : <ArrowRightLeft size={18} />}
+                  Swap USDT to WYDA
+                </button>
+              </div>
+
+              <div className="space-y-4 pt-6 border-t border-[#333]">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-[10px] font-bold text-[#555] uppercase tracking-widest">Quick LP Provision</h3>
+                  <span className="text-[9px] text-[#888] uppercase">ApeSwap Router</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {[50, 80, 100, 200].map(amt => (
+                    <button 
+                      key={amt}
+                      onClick={() => handleAddLP(amt.toString())}
+                      disabled={isProcessing}
+                      className="flex items-center justify-between p-3 bg-black border border-[#333] hover:border-[#ff00ff] hover:bg-[#ff00ff]/5 transition-all group"
+                    >
+                      <div className="text-left">
+                        <div className="text-[8px] text-[#555] font-bold uppercase group-hover:text-[#ff00ff]">Add LP</div>
+                        <div className="text-sm font-bold group-hover:text-white">{amt} USDT</div>
+                      </div>
+                      <Plus size={14} className="text-[#333] group-hover:text-[#ff00ff]" />
+                    </button>
+                  ))}
+                </div>
+                <button 
+                  onClick={() => handleAddLP(swapAmount)}
+                  disabled={isProcessing}
+                  className="w-full py-3 border border-[#ff00ff]/30 text-[#ff00ff]/70 text-[10px] font-bold uppercase tracking-widest hover:bg-[#ff00ff]/10 hover:text-[#ff00ff] transition-all flex items-center justify-center gap-2"
+                >
+                  <Droplets size={14} />
+                  Custom LP: {swapAmount} USDT
+                </button>
+              </div>
+
+              <div className="p-4 bg-black/50 border border-[#333] rounded-sm">
+                <p className="text-[9px] text-[#555] leading-relaxed uppercase">
+                  Transactions are processed via ApeSwap Router on BSC. Rate is estimated at 1 USDT = 760.3 WYDA. Ensure you have sufficient USDT and BNB for gas.
+                </p>
+              </div>
             </div>
           </div>
         ) : (
