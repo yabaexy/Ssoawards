@@ -61,10 +61,7 @@ const ADMIN_ADDRESSES = [
   '0x8Cda9D8b30272A102e0e05A1392A795c267F14Bf',
   '0x2E9Bff8Bf288ec3AB1Dc540B777f9b48276a6286'
 ].map(a => a.toLowerCase());
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('awards');
   const [activeGame, setActiveGame] = useState<GameType>('sonoban');
