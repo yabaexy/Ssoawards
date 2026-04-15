@@ -90,7 +90,11 @@ export default function App() {
       const response = await fetch(`/api/candidates/${targetYear}`);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || errorData.error || "Failed to fetch candidates from database");
+        let msg = errorData.message || errorData.error || "Failed to fetch candidates from database";
+        if (msg.includes("Could not find the table") || msg.includes("relation") && msg.includes("does not exist")) {
+          msg = "Database tables are missing. Please run the SQL script in 'supabase_schema.sql' in your Supabase SQL Editor.";
+        }
+        throw new Error(msg);
       }
       let data = await response.json();
       
@@ -128,6 +132,13 @@ export default function App() {
   const fetchTopics = async () => {
     try {
       const res = await fetch('/api/topics');
+      if (!res.ok) {
+        const errorData = await res.json();
+        if (errorData.error?.includes("Could not find the table")) {
+          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
+        }
+        throw new Error(errorData.error);
+      }
       const data = await res.json();
       setTopics(data);
     } catch (err) {
@@ -138,6 +149,13 @@ export default function App() {
   const fetchPoints = async (address: string) => {
     try {
       const res = await fetch(`/api/points/${address}`);
+      if (!res.ok) {
+        const errorData = await res.json();
+        if (errorData.error?.includes("Could not find the table")) {
+          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
+        }
+        throw new Error(errorData.error);
+      }
       const data = await res.json();
       setYmpPoints(data.points);
       setMuseData(data);
