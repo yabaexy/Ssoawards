@@ -132,3 +132,17 @@ export async function connectWallet() {
   const accounts = await provider.send("eth_requestAccounts", []);
   return accounts[0];
 }
+
+export async function getWYDABalance(address: string) {
+  if (!window.ethereum) return "0";
+  try {
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const wydaContract = new ethers.Contract(WYDA_CONTRACT_ADDRESS, ERC20_ABI, provider);
+    const balance = await wydaContract.balanceOf(address);
+    const decimals = await wydaContract.decimals();
+    return ethers.formatUnits(balance, decimals);
+  } catch (err) {
+    console.error("Error fetching WYDA balance:", err);
+    return "0";
+  }
+}
