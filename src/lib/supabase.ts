@@ -55,6 +55,8 @@ export interface DbCandidate {
   year: number;
   image_url?: string;
   video_url?: string;
+  is_published: boolean;
+  archived: boolean;
   created_at: string;
 }
 

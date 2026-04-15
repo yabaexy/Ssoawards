@@ -4,6 +4,12 @@ import path from "path";
 import { put } from "@vercel/blob";
 import { supabase } from "./src/lib/supabase";
 
+const ADMIN_ADDRESSES = [
+  '0xf44d876365611149ebc396def8edd18a83be91c0',
+  '0x8Cda9D8b30272A102e0e05A1392A795c267F14Bf',
+  '0x2E9Bff8Bf288ec3AB1Dc540B777f9b48276a6286'
+].map(a => a.toLowerCase());
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -37,14 +43,63 @@ async function startServer() {
       return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });
     }
     const year = parseInt(req.params.year);
+    const isAdmin = req.query.isAdmin === 'true';
     
+    // Auto-archive logic: If year is in the past, archive all candidates of that year
+    const currentYear = new Date().getFullYear();
+    if (year < currentYear) {
+      await supabase
+        .from('candidates')
+        .update({ archived: true })
+        .eq('year', year);
+    }
+
     try {
-      const { data: existing, error: fetchError } = await supabase
+      // 1. Try the full query with filters
+      let query = supabase
         .from('candidates')
         .select('*')
-        .eq('year', year);
+        .eq('year', year)
+        .eq('archived', false);
 
-      if (fetchError) throw fetchError;
+      if (!isAdmin) {
+        query = query.eq('is_published', true);
+      }
+
+      const { data: existing, error: fetchError } = await query;
+
+      if (fetchError) {
+        // 2. Fallback: If columns are missing, try a simple query and filter in-memory
+        if (fetchError.message.includes("column") && (fetchError.message.includes("archived") || fetchError.message.includes("is_published"))) {
+          console.warn("Database schema is outdated. Falling back to in-memory filtering.");
+          
+          const { data: fallbackData, error: fallbackError } = await supabase
+            .from('candidates')
+            .select('*')
+            .eq('year', year);
+
+          if (fallbackError) throw fallbackError;
+
+          // Map old data to new schema format
+          const mappedData = (fallbackData || []).map(item => ({
+            ...item,
+            is_published: item.is_published ?? true, // Assume old items are published
+            archived: item.archived ?? false        // Assume old items are not archived
+          }));
+
+          // Apply filters in-memory
+          const filteredData = mappedData.filter(item => {
+            if (item.archived) return false;
+            if (!isAdmin && !item.is_published) return false;
+            return true;
+          });
+
+          return res.json(filteredData);
+        }
+        
+        logError("Supabase Query Error", fetchError);
+        throw fetchError;
+      }
       res.json(existing || []);
     } catch (error: any) {
       logError("API Fetch Error", error);
@@ -56,6 +111,29 @@ async function startServer() {
     }
   });
 
+  app.patch("/api/candidates/:id", async (req, res) => {
+    if (!checkEnv()) return res.status(500).json({ error: "Configuration Error" });
+    const { adminAddress, ...updates } = req.body;
+    
+    if (!adminAddress || !ADMIN_ADDRESSES.includes(adminAddress.toLowerCase())) {
+      return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('candidates')
+        .update(updates)
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      res.json(data);
+    } catch (error: any) {
+      logError("Update Candidate Error", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
   app.post("/api/candidates", async (req, res) => {
     if (!checkEnv()) {
       return res.status(500).json({ error: "Configuration Error", message: "Supabase environment variables are missing." });

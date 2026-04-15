@@ -51,6 +51,12 @@ type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse';
 type GameType = 'reversi' | 'chess' | 'tetris' | 'pong' | 'sonoban';
 type MuseSubTab = 'main' | 'quests' | 'archive' | 'defi';
 
+const ADMIN_ADDRESSES = [
+  '0xf44d876365611149ebc396def8edd18a83be91c0',
+  '0x8Cda9D8b30272A102e0e05A1392A795c267F14Bf',
+  '0x2E9Bff8Bf288ec3AB1Dc540B777f9b48276a6286'
+].map(a => a.toLowerCase());
+
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('awards');
   const [activeGame, setActiveGame] = useState<GameType>('sonoban');
@@ -76,6 +82,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
+
+  const isAdmin = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
 
   // Markets State
   const [topics, setTopics] = useState<(DbTopic & { votes: any[] })[]>([]);
@@ -91,7 +100,8 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/candidates/${targetYear}`);
+      const isAdminCheck = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
+      const response = await fetch(`/api/candidates/${targetYear}?isAdmin=${isAdminCheck}`);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         let msg = errorData.message || errorData.error || "Failed to fetch candidates from database";
@@ -171,7 +181,7 @@ export default function App() {
   useEffect(() => {
     if (viewMode === 'awards') fetchCandidates(year);
     if (viewMode === 'markets') fetchTopics();
-  }, [year, viewMode]);
+  }, [year, viewMode, walletAddress]);
 
   useEffect(() => {
     if (walletAddress) fetchPoints(walletAddress);
@@ -309,6 +319,23 @@ export default function App() {
     }
   };
 
+  const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
+    if (!walletAddress) return;
+    try {
+      const res = await fetch(`/api/candidates/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...updates, adminAddress: walletAddress })
+      });
+      if (!res.ok) throw new Error("Failed to update candidate");
+      setEditingCandidate(null);
+      fetchCandidates(year);
+      setSuccess("Candidate updated successfully!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   const handleVote = async (candidate: Candidate) => {
     if (!walletAddress) {
       setError("Please connect your wallet first.");
@@ -318,7 +345,7 @@ export default function App() {
     setError(null);
     setSuccess(null);
     try {
-      await voteForCandidate(candidate.id - 1);
+      await voteForCandidate(parseInt(candidate.id) - 1);
       setSuccess(`Successfully voted for ${candidate.name}! 10 Wyda sent.`);
     } catch (err: any) {
       console.error(err);
@@ -500,62 +527,131 @@ export default function App() {
 
                     {/* Content Column */}
                     <div className="p-6 space-y-4">
-                      {candidate.image_url && (
-                        <div className="aspect-video w-full overflow-hidden border border-[#333] bg-[#111]">
-                          <img 
-                            src={candidate.image_url} 
-                            alt={candidate.name} 
-                            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                            referrerPolicy="no-referrer"
+                      {editingCandidate?.id === candidate.id ? (
+                        <div className="space-y-4">
+                          <input 
+                            className="w-full bg-[#111] border border-[#333] p-2 text-sm text-white"
+                            value={editingCandidate.name}
+                            onChange={(e) => setEditingCandidate({...editingCandidate, name: e.target.value})}
+                            placeholder="Candidate Name"
                           />
+                          <textarea 
+                            className="w-full bg-[#111] border border-[#333] p-2 text-sm text-white h-24"
+                            value={editingCandidate.story}
+                            onChange={(e) => setEditingCandidate({...editingCandidate, story: e.target.value})}
+                            placeholder="Story"
+                          />
+                          <textarea 
+                            className="w-full bg-[#111] border border-[#333] p-2 text-sm text-white h-16"
+                            value={editingCandidate.reason}
+                            onChange={(e) => setEditingCandidate({...editingCandidate, reason: e.target.value})}
+                            placeholder="Reason"
+                          />
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleUpdateCandidate(candidate.id, { 
+                                name: editingCandidate.name, 
+                                story: editingCandidate.story, 
+                                reason: editingCandidate.reason 
+                              })}
+                              className="px-4 py-1 bg-[#00ff00] text-black text-[10px] font-bold uppercase"
+                            >
+                              Save Draft
+                            </button>
+                            <button 
+                              onClick={() => setEditingCandidate(null)}
+                              className="px-4 py-1 border border-[#333] text-[10px] font-bold uppercase"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
+                      ) : (
+                        <>
+                          {candidate.image_url && (
+                            <div className="aspect-video w-full overflow-hidden border border-[#333] bg-[#111]">
+                              <img 
+                                src={candidate.image_url} 
+                                alt={candidate.name} 
+                                className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+                          )}
+                          <div className="space-y-1">
+                            <div className="flex justify-between items-start">
+                              <h3 className="text-xl font-bold uppercase tracking-tight group-hover:text-[#00ff00] transition-colors">
+                                {candidate.name || "Empty Candidate Slot"}
+                              </h3>
+                              {isAdmin && (
+                                <div className="flex gap-2">
+                                  {!candidate.is_published && (
+                                    <span className="text-[8px] bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 px-2 py-0.5 uppercase font-bold">Draft</span>
+                                  )}
+                                  <button 
+                                    onClick={() => setEditingCandidate(candidate)}
+                                    className="text-[10px] text-[#888] hover:text-[#00ff00] uppercase font-bold flex items-center gap-1"
+                                  >
+                                    <RefreshCw size={10} /> Edit
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-[#888] uppercase">
+                              <Code size={12} />
+                              <span>Class: Fatal Logic Error</span>
+                              <span className="opacity-30">|</span>
+                              <Cpu size={12} />
+                              <span>Hardware: Compromised</span>
+                            </div>
+                          </div>
+                          <p className="text-sm text-[#aaa] leading-relaxed">
+                            {candidate.story || "This slot is currently empty. Admin can edit this content."}
+                          </p>
+                          <div className="p-3 bg-[#111] border-l-2 border-[#00ff00] text-[11px] italic text-[#888]">
+                            <span className="text-[#00ff00] font-bold not-italic uppercase mr-2">Reason:</span>
+                            {candidate.reason || "Awaiting admin input..."}
+                          </div>
+                        </>
                       )}
-                      <div className="space-y-1">
-                        <h3 className="text-xl font-bold uppercase tracking-tight group-hover:text-[#00ff00] transition-colors">
-                          {candidate.name}
-                        </h3>
-                        <div className="flex items-center gap-2 text-[10px] text-[#888] uppercase">
-                          <Code size={12} />
-                          <span>Class: Fatal Logic Error</span>
-                          <span className="opacity-30">|</span>
-                          <Cpu size={12} />
-                          <span>Hardware: Compromised</span>
-                        </div>
-                      </div>
-                      <p className="text-sm text-[#aaa] leading-relaxed">
-                        {candidate.story}
-                      </p>
-                      <div className="p-3 bg-[#111] border-l-2 border-[#00ff00] text-[11px] italic text-[#888]">
-                        <span className="text-[#00ff00] font-bold not-italic uppercase mr-2">Reason:</span>
-                        {candidate.reason}
-                      </div>
                     </div>
 
                     {/* Action Column */}
                     <div className="p-6 flex flex-col justify-center gap-4 border-t md:border-t-0 md:border-l border-[#333] group-hover:border-[#00ff00] transition-colors bg-[#0f0f0f]">
-                      <div className="text-center space-y-1">
-                        <p className="text-[10px] text-[#888] uppercase tracking-widest">Vote Cost</p>
-                        <p className="text-lg font-bold">10 WYDA</p>
-                      </div>
-                      <button 
-                        onClick={() => handleVote(candidate)}
-                        disabled={votingId !== null}
-                        className={cn(
-                          "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all",
-                          votingId === candidate.id
-                            ? "bg-[#333] text-[#888] cursor-not-allowed"
-                            : "bg-[#00ff00] text-black hover:bg-black hover:text-[#00ff00] border border-[#00ff00]"
-                        )}
-                      >
-                        {votingId === candidate.id ? (
-                          <span className="flex items-center justify-center gap-2">
-                            <RefreshCw size={12} className="animate-spin" />
-                            Processing...
-                          </span>
-                        ) : (
-                          "Cast Vote"
-                        )}
-                      </button>
+                      {isAdmin && !candidate.is_published ? (
+                        <button 
+                          onClick={() => handleUpdateCandidate(candidate.id, { is_published: true })}
+                          className="w-full py-3 bg-[#ff4444] text-white text-[10px] font-bold uppercase tracking-widest hover:bg-white hover:text-black transition-all border border-[#ff4444]"
+                        >
+                          Publish Now
+                        </button>
+                      ) : (
+                        <>
+                          <div className="text-center space-y-1">
+                            <p className="text-[10px] text-[#888] uppercase tracking-widest">Vote Cost</p>
+                            <p className="text-lg font-bold">10 WYDA</p>
+                          </div>
+                          <button 
+                            onClick={() => handleVote(candidate)}
+                            disabled={votingId !== null || !candidate.is_published}
+                            className={cn(
+                              "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all",
+                              votingId === candidate.id || !candidate.is_published
+                                ? "bg-[#333] text-[#888] cursor-not-allowed"
+                                : "bg-[#00ff00] text-black hover:bg-black hover:text-[#00ff00] border border-[#00ff00]"
+                            )}
+                          >
+                            {votingId === candidate.id ? (
+                              <span className="flex items-center justify-center gap-2">
+                                <RefreshCw size={12} className="animate-spin" />
+                                Processing...
+                              </span>
+                            ) : (
+                              "Cast Vote"
+                            )}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </motion.div>
                 ))

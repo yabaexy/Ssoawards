@@ -1,3 +1,7 @@
+-- IMPORTANT: If you see "column does not exist" errors, 
+-- COPY AND RUN THIS ENTIRE SCRIPT in your Supabase SQL Editor.
+-- It will safely create missing tables or add missing columns.
+
 -- Supabase Schema for Unsource One Muse App
 
 -- 1. Candidates Table
@@ -9,8 +13,21 @@ CREATE TABLE IF NOT EXISTS candidates (
   year INT4 NOT NULL,
   image_url TEXT,
   video_url TEXT,
+  is_published BOOLEAN DEFAULT false,
+  archived BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Migration: Add missing columns if table already exists
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='candidates' AND column_name='is_published') THEN
+    ALTER TABLE public.candidates ADD COLUMN is_published BOOLEAN DEFAULT false;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='candidates' AND column_name='archived') THEN
+    ALTER TABLE public.candidates ADD COLUMN archived BOOLEAN DEFAULT false;
+  END IF;
+END $$;
 
 -- 2. Topics Table (Prediction Markets)
 CREATE TABLE IF NOT EXISTS topics (
