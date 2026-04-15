@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 // src/lib/supabase.ts
-import { createClient } from "@supabase/supabase-js";
+
 import { supabase } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
@@ -163,27 +163,22 @@ export default function App() {
 
 const fetchTopic
 
-  const fetchPoints = async (address: string) => {
-    try {
-      const res = await fetch(`/api/points/${address}`);
-      if (!res.ok) {
-        const errorData = await res.json();
-        if (errorData.error?.includes("Could not find the table")) {
-          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
-        }
-        throw new Error(errorData.error);
-      }
-      const data = await res.json();
-      setYmpPoints(data.points);
-      setMuseData(data);
-      
-      // Also fetch WYDA balance
-      const balance = await getWYDABalance(address);
-      setWydaBalance(balance);
-    } catch (err) {
-      console.error("Failed to fetch points", err);
-    }
-  };
+const fetchPoints = async (address: string) => {
+  try {
+    const { data, error } = await supabase
+      .from("user_points")
+      .select("*")
+      .eq("wallet_address", address)
+      .single();
+
+    if (error && error.code !== "PGRST116") throw error;
+
+    setYmpPoints(data?.points || 0);
+    setMuseData(data);
+  } catch (err) {
+    console.error("Failed to fetch points", err);
+  }
+};
 
   useEffect(() => {
     if (viewMode === 'awards') fetchCandidates(year);
@@ -232,49 +227,44 @@ const fetchTopic
   };
 
   const handleCreateTopic = async () => {
-    if (!walletAddress) return setError("Connect wallet to create topic");
-    if (!newTopic.title || !newTopic.description) return setError("Fill all fields");
-    
-    try {
-      const res = await fetch('/api/topics', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newTopic, creator_address: walletAddress })
-      });
-      if (!res.ok) throw new Error("Failed to create topic");
-      setShowCreateTopic(false);
-      setNewTopic({ title: '', description: '', options: ['', ''] });
-      fetchTopics();
-      setSuccess("Topic created successfully!");
-      
-      // Mission Check: Create Market Vote (simulated as creation for now)
-      completeMission('market_vote');
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  if (!walletAddress) return setError("Connect wallet");
+
+  try {
+    const { error } = await supabase.from("topics").insert({
+      ...newTopic,
+      creator_address: walletAddress,
+    });
+
+    if (error) throw error;
+
+    setShowCreateTopic(false);
+    setNewTopic({ title: "", description: "", options: ["", ""] });
+
+    fetchTopics();
+    setSuccess("Topic created!");
+  } catch (err: any) {
+    setError(err.message);
+  }
+};
 
   const handleMarketVote = async (topicId: string, optionIndex: number) => {
-    if (!walletAddress) return setError("Connect wallet to vote");
-    try {
-      const res = await fetch('/api/votes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic_id: topicId, voter_address: walletAddress, option_index: optionIndex })
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to vote");
-      }
-      fetchTopics();
-      setSuccess("Vote cast successfully!");
-      
-      // Mission Check
-      completeMission('market_vote');
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  if (!walletAddress) return setError("Connect wallet");
+
+  try {
+    const { error } = await supabase.from("votes").insert({
+      topic_id: topicId,
+      voter_address: walletAddress,
+      option_index: optionIndex,
+    });
+
+    if (error) throw error;
+
+    fetchTopics();
+    setSuccess("Vote cast!");
+  } catch (err: any) {
+    setError(err.message);
+  }
+};
 
   const completeMission = async (missionId: string) => {
     if (!walletAddress || !museData) return;
