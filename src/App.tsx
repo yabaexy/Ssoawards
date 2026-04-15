@@ -288,21 +288,28 @@ const fetchPoints = async (address: string) => {
   const rewards: Record<string, number> = {
     market_vote: 450,
     lp_provide: 1200,
-    play_games: 700
+    play_games: 700,
   };
 
   const reward = rewards[missionId] || 0;
+  const nextPoints = ympPoints + reward;
+  const nextMissions = [...museData.completed_missions, missionId];
 
   const { error } = await supabase
     .from("user_points")
-    .update({
-      points: ympPoints + reward,
-      completed_missions: [...museData.completed_missions, missionId]
-    })
-    .eq("wallet_address", walletAddress);
+    .upsert({
+      wallet_address: walletAddress,
+      points: nextPoints,
+      muse_level: museData.muse_level || 1,
+      unlocked_skins: museData.unlocked_skins || ["default"],
+      current_skin: museData.current_skin || "default",
+      completed_missions: nextMissions,
+    });
 
   if (!error) {
-    setYmpPoints(ympPoints + reward);
+    setYmpPoints(nextPoints);
+    setMuseData({ ...museData, points: nextPoints, completed_missions: nextMissions });
+    setSuccess(`Mission Complete! +${reward} YMP`);
   }
 };
 
