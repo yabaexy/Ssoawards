@@ -181,27 +181,42 @@ export default function App() {
     }
   };
 
-  const fetchPoints = async (address: string) => {
-    try {
-      const res = await fetch(`/api/points/${address}`);
-      if (!res.ok) {
-        const errorData = await res.json();
-        if (errorData.error?.includes("Could not find the table")) {
-          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
-        }
-        throw new Error(errorData.error);
+const fetchPoints = async (address: string) => {
+  try {
+    // 🔥 Supabase 직접 조회
+    const { data, error } = await supabase
+      .from("user_points")
+      .select("*")
+      .eq("address", address)
+      .single();
+
+    if (error) {
+      if (error.message.includes("Could not find the table")) {
+        setError("Database tables are missing. Run supabase_schema.sql");
+      } else if (error.code === "PGRST116") {
+        // 데이터 없음 (처음 접속)
+        setYmpPoints(0);
+        setMuseData(null);
+        return;
+      } else {
+        throw error;
       }
-      const data = await res.json();
+    }
+
+    if (data) {
       setYmpPoints(data.points);
       setMuseData(data);
-      
-      // Also fetch WYDA balance
-      const balance = await getWYDABalance(address);
-      setWydaBalance(balance);
-    } catch (err) {
-      console.error("Failed to fetch points", err);
     }
-  };
+
+    // ✅ WYDA 잔액은 그대로 유지
+    const balance = await getWYDABalance(address);
+    setWydaBalance(balance);
+
+  } catch (err) {
+    console.error("Failed to fetch points", err);
+    setError("Failed to load user data");
+  }
+};
 
   useEffect(() => {
     if (viewMode === 'awards') fetchCandidates(year);
