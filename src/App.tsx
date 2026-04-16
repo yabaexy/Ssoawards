@@ -43,8 +43,6 @@ import {
 import { generateCandidates, type Candidate } from "./lib/gemini";
 import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity, getWYDABalance } from "./lib/web3";
 import { cn } from "./lib/utils";
-import type { DbTopic, UserPoints } from "./lib/supabase";
-
 // Game Components
 import Reversi from "./components/games/Reversi";
 import ChessGame from "./components/games/Chess";
@@ -92,6 +90,16 @@ export default function App() {
   const [wydaBalance, setWydaBalance] = useState("0");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAdminEdit, setShowAdminEdit] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newCandidate, setNewCandidate] = useState({
+    name: "",
+    story: "",
+    reason: "",
+    image_url: "",
+    year: new Date().getFullYear(),
+    is_published: false,
+    archived: false,
+  });
 
   const isAdmin = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
 
@@ -138,24 +146,19 @@ export default function App() {
     if (!isAdmin || !walletAddress) return;
     setLoading(true);
     try {
-      // Create 5 empty slots
       const emptySlots = Array.from({ length: 5 }).map((_, i) => ({
         name: "",
         story: "",
         reason: "",
-        year: year,
+        year,
         is_published: false,
-        image_url: `https://picsum.photos/seed/empty-${year}-${i}/800/600`
+        archived: false,
+        image_url: `https://picsum.photos/seed/empty-${year}-${i}/800/600`,
       }));
 
-      const res = await fetch('/api/candidates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(emptySlots)
-      });
+      const { error } = await supabase.from("candidates").insert(emptySlots);
+      if (error) throw error;
 
-      if (!res.ok) throw new Error("Failed to initialize year");
-      
       setSuccess(`Initialized 5 empty slots for ${year}`);
       fetchCandidates(year);
     } catch (err: any) {
@@ -167,16 +170,12 @@ export default function App() {
 
   const fetchTopics = async () => {
     try {
-      const res = await fetch('/api/topics');
-      if (!res.ok) {
-        const errorData = await res.json();
-        if (errorData.error?.includes("Could not find the table")) {
-          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
-        }
-        throw new Error(errorData.error);
-      }
-      const data = await res.json();
-      setTopics(data);
+      const { data, error } = await supabase
+        .from("topics")
+        .select("*, votes(*)");
+
+      if (error) throw error;
+      setTopics((data as any) ?? []);
     } catch (err) {
       console.error("Failed to fetch topics", err);
     }
@@ -184,10 +183,11 @@ export default function App() {
 
 const fetchPoints = async (address: string) => {
   try {
+    const wallet = address.toLowerCase();
     const { data, error } = await supabase
       .from("user_points")
       .select("*")
-      .eq("address", address)
+      .eq("wallet_address", wallet)
       .maybeSingle();
 
     if (error) {
@@ -195,17 +195,21 @@ const fetchPoints = async (address: string) => {
       return;
     }
 
-    if (!data) {
-      setError("No user data found");
-      return;
-    }
+    const defaultData = {
+      wallet_address: wallet,
+      points: 0,
+      muse_level: 1,
+      unlocked_skins: ["default"],
+      current_skin: "default",
+      completed_missions: [],
+    } as UserPoints;
 
-    setYmpPoints(data.points ?? 0);
-    setMuseData(data);
+    const next = (data as UserPoints | null) ?? defaultData;
+    setYmpPoints(next.points ?? 0);
+    setMuseData(next);
 
-    const balance = await getWYDABalance(address);
+    const balance = await getWYDABalance(wallet);
     setWydaBalance(balance);
-
   } catch (err) {
     console.error(err);
     setError("fetchPoints failed");
@@ -213,6 +217,7 @@ const fetchPoints = async (address: string) => {
 };
 
   useEffect(() => {
+
     if (viewMode === 'awards') fetchCandidates(year);
     if (viewMode === 'markets') fetchTopics();
   }, [year, viewMode, walletAddress]);
@@ -261,66 +266,102 @@ const fetchPoints = async (address: string) => {
   const handleCreateTopic = async () => {
     if (!walletAddress) return setError("Connect wallet to create topic");
     if (!newTopic.title || !newTopic.description) return setError("Fill all fields");
-    
+
     try {
-      const res = await fetch('/api/topics', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newTopic, creator_address: walletAddress })
-      });
-      if (!res.ok) throw new Error("Failed to create topic");
+      const { error } = await supabase.from("topics").insert([
+        {
+          title: newTopic.title,
+          description: newTopic.description,
+          options: newTopic.options.filter(Boolean),
+          creator_address: walletAddress,
+          status: "open",
+        },
+      ]);
+      if (error) throw error;
+
       setShowCreateTopic(false);
       setNewTopic({ title: '', description: '', options: ['', ''] });
       fetchTopics();
       setSuccess("Topic created successfully!");
-      
-      // Mission Check: Create Market Vote (simulated as creation for now)
       completeMission('market_vote');
     } catch (err: any) {
       setError(err.message);
     }
   };
-  const updateCandidate = async (candidate: Candidate) => {
-  try {
-    const { error } = await supabase
-      .from("candidates")
-      .update({
-        name: candidate.name,
-        story: candidate.story,
-        reason: candidate.reason,
-        image_url: candidate.image_url,
-        is_published: candidate.is_published
-      })
-      .eq("id", candidate.id);
 
-    if (error) throw error;
+  const createCandidate = async () => {
+    if (!walletAddress || !isAdmin) return;
+    try {
+      const { error } = await supabase.from("candidates").insert([
+        {
+          ...newCandidate,
+          year,
+          archived: false,
+        },
+      ]);
+      if (error) throw error;
+      setShowCreateModal(false);
+      setNewCandidate({
+        name: "",
+        story: "",
+        reason: "",
+        image_url: "",
+        year,
+        is_published: false,
+        archived: false,
+      });
+      fetchCandidates(year);
+      setSuccess("Candidate created successfully!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
-    setSuccess("Candidate updated!");
+  const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
+    if (!walletAddress || !isAdmin) return;
+    try {
+      const { error } = await supabase
+        .from("candidates")
+        .update(updates)
+        .eq("id", id);
 
-    // 🔥 핵심: 다시 불러오기
-    fetchCandidates(year);
+      if (error) throw error;
 
-  } catch (err: any) {
-    setError(err.message);
-  }
-};
+      setSuccess("Candidate updated!");
+      setEditingCandidate(null);
+      setShowAdminEdit(false);
+      fetchCandidates(year);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   const handleMarketVote = async (topicId: string, optionIndex: number) => {
     if (!walletAddress) return setError("Connect wallet to vote");
     try {
-      const res = await fetch('/api/votes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic_id: topicId, voter_address: walletAddress, option_index: optionIndex })
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to vote");
+      const voter_address = walletAddress.toLowerCase();
+      const { data: existing, error: existingError } = await supabase
+        .from("votes")
+        .select("id")
+        .eq("topic_id", topicId)
+        .eq("voter_address", voter_address);
+
+      if (existingError) throw existingError;
+      if (existing && existing.length > 0) {
+        throw new Error("Already voted on this topic");
       }
+
+      const { error } = await supabase.from("votes").insert([
+        {
+          topic_id: topicId,
+          voter_address,
+          option_index: optionIndex,
+        },
+      ]);
+      if (error) throw error;
+
       fetchTopics();
       setSuccess("Vote cast successfully!");
-      
-      // Mission Check
       completeMission('market_vote');
     } catch (err: any) {
       setError(err.message);
@@ -338,24 +379,27 @@ const fetchPoints = async (address: string) => {
     };
 
     const reward = rewards[missionId] || 0;
-    const newPoints = ympPoints + reward;
+    const newPoints = (ympPoints || 0) + reward;
     const newMissions = [...museData.completed_missions, missionId];
 
     try {
-      const res = await fetch('/api/muse/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          wallet_address: walletAddress,
+      const { error } = await supabase
+        .from("user_points")
+        .upsert({
+          wallet_address: walletAddress.toLowerCase(),
           points: newPoints,
-          completed_missions: newMissions
+          muse_level: museData.muse_level ?? 1,
+          unlocked_skins: museData.unlocked_skins ?? ["default"],
+          current_skin: museData.current_skin ?? "default",
+          completed_missions: newMissions,
         })
-      });
-      if (res.ok) {
-        setYmpPoints(newPoints);
-        setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
-        setSuccess(`Mission Complete! +${reward} YMP`);
-      }
+        .select();
+
+      if (error) throw error;
+
+      setYmpPoints(newPoints);
+      setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
+      setSuccess(`Mission Complete! +${reward} YMP`);
     } catch (err) {
       console.error("Failed to update mission", err);
     }
@@ -363,12 +407,42 @@ const fetchPoints = async (address: string) => {
 
   const handleResolve = async (topicId: string, winnerIndex: number) => {
     try {
-      const res = await fetch(`/api/topics/${topicId}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ winner_index: winnerIndex })
-      });
-      if (!res.ok) throw new Error("Failed to resolve");
+      const { error: topicError } = await supabase
+        .from("topics")
+        .update({ status: "resolved", winner_index: winnerIndex })
+        .eq("id", topicId);
+      if (topicError) throw topicError;
+
+      const { data: winners, error: votesError } = await supabase
+        .from("votes")
+        .select("voter_address")
+        .eq("topic_id", topicId)
+        .eq("option_index", winnerIndex);
+      if (votesError) throw votesError;
+
+      if (winners?.length) {
+        for (const winner of winners) {
+          const address = winner.voter_address.toLowerCase();
+          const { data: current, error: currentError } = await supabase
+            .from("user_points")
+            .select("points, muse_level, unlocked_skins, current_skin, completed_missions")
+            .eq("wallet_address", address)
+            .maybeSingle();
+          if (currentError) throw currentError;
+
+          const currentPoints = current?.points ?? 0;
+          const newPoints = currentPoints + 3800;
+          await supabase.from("user_points").upsert({
+            wallet_address: address,
+            points: newPoints,
+            muse_level: current?.muse_level ?? 1,
+            unlocked_skins: current?.unlocked_skins ?? ["default"],
+            current_skin: current?.current_skin ?? "default",
+            completed_missions: current?.completed_missions ?? [],
+          });
+        }
+      }
+
       fetchTopics();
       if (walletAddress) fetchPoints(walletAddress);
       setSuccess("Topic resolved and points awarded!");
@@ -377,24 +451,9 @@ const fetchPoints = async (address: string) => {
     }
   };
 
-  const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
-    if (!walletAddress) return;
-    try {
-      const res = await fetch(`/api/candidates/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...updates, adminAddress: walletAddress })
-      });
-      if (!res.ok) throw new Error("Failed to update candidate");
-      setEditingCandidate(null);
-      fetchCandidates(year);
-      setSuccess("Candidate updated successfully!");
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
   const handleVote = async (candidate: Candidate) => {
+
+
     if (!walletAddress) {
       setError("Please connect your wallet first.");
       return;
@@ -578,6 +637,18 @@ const fetchPoints = async (address: string) => {
                       Admin Edit
                     </button>
                   )}
+                  {isAdmin && (
+                    <button
+                      onClick={() => {
+                        setShowCreateModal(true);
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className="flex items-center gap-4 px-4 py-4 text-sm font-bold uppercase tracking-widest transition-all border border-[#00ff00]/30 rounded-sm text-[#00ff00] hover:bg-[#00ff00]/10"
+                    >
+                      <Plus size={18} />
+                      Create Candidate
+                    </button>
+                  )}
                 </nav>
 
                 {walletAddress && (
@@ -690,7 +761,7 @@ const fetchPoints = async (address: string) => {
                 </div>
               ) : (
                 candidates
-                  .filter(c => showAdminEdit ? !c.is_published : c.is_published || isAdmin)
+                  .filter(c => showAdminEdit ? true : c.is_published || isAdmin)
                   .map((candidate, idx) => (
                     <motion.div 
                     key={candidate.id}
@@ -1408,6 +1479,128 @@ const fetchPoints = async (address: string) => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {showCreateModal && isAdmin && (
+          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-[#333] p-6 rounded-sm space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="text-lg font-black uppercase tracking-tighter">Create Candidate</h3>
+                <button onClick={() => setShowCreateModal(false)} className="text-xs uppercase text-[#888] hover:text-white">Close</button>
+              </div>
+              <input
+                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
+                value={newCandidate.name}
+                onChange={(e) => setNewCandidate({ ...newCandidate, name: e.target.value })}
+                placeholder="Candidate Name"
+              />
+              <textarea
+                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-28"
+                value={newCandidate.story}
+                onChange={(e) => setNewCandidate({ ...newCandidate, story: e.target.value })}
+                placeholder="Story"
+              />
+              <textarea
+                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-20"
+                value={newCandidate.reason}
+                onChange={(e) => setNewCandidate({ ...newCandidate, reason: e.target.value })}
+                placeholder="Reason"
+              />
+              <input
+                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
+                value={newCandidate.image_url}
+                onChange={(e) => setNewCandidate({ ...newCandidate, image_url: e.target.value })}
+                placeholder="Image URL"
+              />
+              <div className="flex items-center gap-2 text-sm">
+                <input
+                  id="candidate-published"
+                  type="checkbox"
+                  checked={newCandidate.is_published}
+                  onChange={(e) => setNewCandidate({ ...newCandidate, is_published: e.target.checked })}
+                />
+                <label htmlFor="candidate-published">Published</label>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={createCandidate}
+                  className="flex-1 py-3 bg-[#00ff00] text-black font-black uppercase tracking-widest"
+                >
+                  Create
+                </button>
+                <button
+                  onClick={() => setShowCreateModal(false)}
+                  className="flex-1 py-3 border border-[#333] font-bold uppercase tracking-widest"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showAdminEdit && editingCandidate && (
+          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-[#333] p-6 rounded-sm space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="text-lg font-black uppercase tracking-tighter">Edit Candidate</h3>
+                <button onClick={() => { setEditingCandidate(null); setShowAdminEdit(false); }} className="text-xs uppercase text-[#888] hover:text-white">Close</button>
+              </div>
+              <input
+                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
+                value={editingCandidate.name}
+                onChange={(e) => setEditingCandidate({ ...editingCandidate, name: e.target.value })}
+                placeholder="Candidate Name"
+              />
+              <textarea
+                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-28"
+                value={editingCandidate.story}
+                onChange={(e) => setEditingCandidate({ ...editingCandidate, story: e.target.value })}
+                placeholder="Story"
+              />
+              <textarea
+                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-20"
+                value={editingCandidate.reason}
+                onChange={(e) => setEditingCandidate({ ...editingCandidate, reason: e.target.value })}
+                placeholder="Reason"
+              />
+              <input
+                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
+                value={editingCandidate.image_url ?? ""}
+                onChange={(e) => setEditingCandidate({ ...editingCandidate, image_url: e.target.value })}
+                placeholder="Image URL"
+              />
+              <div className="flex items-center gap-2 text-sm">
+                <input
+                  id="candidate-edit-published"
+                  type="checkbox"
+                  checked={!!editingCandidate.is_published}
+                  onChange={(e) => setEditingCandidate({ ...editingCandidate, is_published: e.target.checked })}
+                />
+                <label htmlFor="candidate-edit-published">Published</label>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => handleUpdateCandidate(editingCandidate.id, {
+                    name: editingCandidate.name,
+                    story: editingCandidate.story,
+                    reason: editingCandidate.reason,
+                    image_url: editingCandidate.image_url,
+                    is_published: editingCandidate.is_published,
+                  })}
+                  className="flex-1 py-3 bg-[#00ff00] text-black font-black uppercase tracking-widest"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => { setEditingCandidate(null); setShowAdminEdit(false); }}
+                  className="flex-1 py-3 border border-[#333] font-bold uppercase tracking-widest"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
