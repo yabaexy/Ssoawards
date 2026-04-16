@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { supabase } from "./lib/supabase";
-import type { DbTopic, UserPoints } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -43,6 +42,7 @@ import {
 import { generateCandidates, type Candidate } from "./lib/gemini";
 import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity, getWYDABalance } from "./lib/web3";
 import { cn } from "./lib/utils";
+import type { DbTopic, UserPoints } from "./lib/supabase";
 
 // Game Components
 import Reversi from "./components/games/Reversi";
@@ -106,207 +106,206 @@ export default function App() {
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
   const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
 
-  const fetchCandidates = async (targetYear: number) => {
+  const fetchCandidates = async (targetYear: number, silent = false) => {
+  if (!silent) {
     setLoading(true);
     setError(null);
+  }
 
-    try {
-      let query = supabase
-        .from("candidates")
-        .select("*")
-        .eq("year", targetYear)
-        .eq("archived", false)
-        .order("created_at", { ascending: false });
-
-      if (!isAdmin) {
-        query = query.eq("is_published", true);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      setCandidates(data ?? []);
-    } catch (err: any) {
-      console.error("Fetch error:", err);
-      setError(`Failed to fetch candidates: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const archiveCandidatesForYear = async (targetYear: number) => {
-    const { error } = await supabase
-      .from("candidates")
-      .update({ archived: true, is_published: false })
-      .eq("year", targetYear)
-      .eq("archived", false);
-
-    if (error) throw error;
-  };
-
-  const seedFiveCandidatesForYear = async (targetYear: number) => {
-    const drafts = Array.from({ length: 5 }).map((_, i) => ({
-      name: `Draft ${i + 1}`,
-      story: "",
-      reason: "",
-      year: targetYear,
-      image_url: `https://picsum.photos/seed/${targetYear}-${i}/800/600`,
-      video_url: "",
-      is_published: false,
-      archived: false
-    }));
-
-    const { error } = await supabase
-      .from("candidates")
-      .insert(drafts);
-
-    if (error) throw error;
-  };
-
-  const fetchArchivedCandidates = async (targetYear: number) => {
-    const { data, error } = await supabase
+  try {
+    let query = supabase
       .from("candidates")
       .select("*")
       .eq("year", targetYear)
-      .eq("archived", true)
-      .order("created_at", { ascending: false });
+      .eq("archived", false);
 
-    if (error) {
-      console.error(error);
-      return [];
+    if (!isAdmin) {
+      query = query.eq("is_published", true);
     }
 
-    return data ?? [];
-  };
+    const { data, error } = await query;
 
-  const ensureYearState = async (targetYear: number) => {
-    setLoading(true);
-    setError(null);
+    if (error) throw error;
 
-    try {
-      const currentYear = new Date().getFullYear();
+    setCandidates(data ?? []);
+  } catch (err: any) {
+    console.error("Fetch error:", err);
+    setError(`Failed to fetch candidates: ${err.message}`);
+  } finally {
+    if (!silent) setLoading(false);
+  }
+};
 
-      if (targetYear < currentYear) {
-        await archiveCandidatesForYear(targetYear);
-      }
+const seedFiveCandidatesForYear = async (targetYear: number) => {
+  const drafts = Array.from({ length: 5 }).map((_, i) => ({
+    name: `Draft ${i + 1}`,
+    story: "",
+    reason: "",
+    year: targetYear,
+    is_published: false,
+    archived: false,
+    image_url: `https://picsum.photos/seed/${targetYear}-${i}/800/600`,
+    video_url: "",
+  }));
 
-      const { data, error } = await supabase
-        .from("candidates")
-        .select("id")
-        .eq("year", targetYear)
-        .eq("archived", false);
+  const { error } = await supabase.from("candidates").insert(drafts as any);
+  if (error) throw error;
+};
 
-      if (error) throw error;
+const archiveCandidatesBeforeYear = async (cutoffYear: number) => {
+  const { error } = await supabase
+    .from("candidates")
+    .update({ archived: true, is_published: false })
+    .lt("year", cutoffYear);
 
-      if (!data || data.length === 0) {
-        await seedFiveCandidatesForYear(targetYear);
-      }
+  if (error) throw error;
+};
 
-      await fetchCandidates(targetYear);
-    } catch (err: any) {
-      console.error("ensureYearState error:", err);
-      setError(err.message || "Failed to prepare year data");
-    } finally {
-      setLoading(false);
+const fetchArchivedCandidates = async (targetYear: number) => {
+  const { data, error } = await supabase
+    .from("candidates")
+    .select("*")
+    .eq("year", targetYear)
+    .eq("archived", true)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as Candidate[];
+};
+
+const ensureYearState = async (targetYear: number) => {
+  setLoading(true);
+  setError(null);
+
+  try {
+    const { data: existing, error } = await supabase
+      .from("candidates")
+      .select("id")
+      .eq("year", targetYear);
+
+    if (error) throw error;
+
+    if (!existing || existing.length === 0) {
+      await seedFiveCandidatesForYear(targetYear);
     }
+
+    await archiveCandidatesBeforeYear(new Date().getFullYear());
+
+    await fetchCandidates(targetYear, true);
+    const archived = await fetchArchivedCandidates(targetYear);
+    setArchivedCandidates(archived);
+  } catch (err: any) {
+    console.error("ensureYearState error:", err);
+    setError(err.message || "Failed to initialize year state");
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleInitializeYear = async () => {
+  if (!isAdmin || !walletAddress) return;
+  await ensureYearState(year);
+  setSuccess(`Initialized 5 empty slots for ${year}`);
+};
+
+const fetchTopics = async () => {
+  try {
+    const { data, error } = await supabase
+      .from("topics")
+      .select("*, votes(*)");
+
+    if (error) throw error;
+    setTopics((data as any) ?? []);
+  } catch (err) {
+    console.error("Failed to fetch topics", err);
+    setError("Failed to fetch topics from database");
+  }
+};
+
+const defaultUserPoints = (wallet: string): UserPoints => ({
+  wallet_address: wallet,
+  points: 0,
+  muse_level: 1,
+  unlocked_skins: ["default"],
+  current_skin: "default",
+  completed_missions: [],
+});
+
+const getOrCreateUserPoints = async (wallet: string) => {
+  const { data, error } = await supabase
+    .from("user_points")
+    .select("*")
+    .eq("wallet_address", wallet)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (data) return data as UserPoints;
+
+  const fallback = defaultUserPoints(wallet);
+  const { data: inserted, error: insertError } = await supabase
+    .from("user_points")
+    .upsert(fallback as any, { onConflict: "wallet_address" })
+    .select("*")
+    .single();
+
+  if (insertError) throw insertError;
+  return inserted as UserPoints;
+};
+
+const upsertUserPoints = async (wallet: string, patch: Partial<UserPoints>) => {
+  const current = await getOrCreateUserPoints(wallet);
+  const payload: UserPoints = {
+    ...current,
+    ...patch,
+    wallet_address: wallet,
   };
 
-  const handleInitializeYear = async () => {
-    if (!isAdmin || !walletAddress) return;
-    try {
-      await seedFiveCandidatesForYear(year);
-      setSuccess(`Initialized 5 empty slots for ${year}`);
-      fetchCandidates(year);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  const { data, error } = await supabase
+    .from("user_points")
+    .upsert(payload as any, { onConflict: "wallet_address" })
+    .select("*")
+    .single();
 
-
-  const fetchTopics = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("topics")
-        .select("*, votes(*)");
-
-      if (error) throw error;
-      setTopics((data as any) ?? []);
-    } catch (err: any) {
-      console.error("Failed to fetch topics", err);
-      setError(err.message || "Failed to fetch topics");
-    }
-  };
+  if (error) throw error;
+  return data as UserPoints;
+};
 
 const fetchPoints = async (address: string) => {
   try {
     const wallet = address.toLowerCase();
-    const { data, error } = await supabase
-      .from("user_points")
-      .select("*")
-      .eq("wallet_address", wallet)
-      .maybeSingle();
+    const next = await getOrCreateUserPoints(wallet);
 
-    if (error) {
-      setError(error.message);
-      return;
-    }
-
-    const defaultData: UserPoints = {
-      wallet_address: wallet,
-      points: 0,
-      muse_level: 1,
-      unlocked_skins: ["default"],
-      current_skin: "default",
-      completed_missions: [],
-    };
-
-    const next = (data as UserPoints | null) ?? defaultData;
     setYmpPoints(next.points ?? 0);
     setMuseData(next);
 
-    try {
-      const balance = await getWYDABalance(wallet);
-      setWydaBalance(balance);
-    } catch (balanceErr) {
-      console.error("Failed to fetch WYDA balance", balanceErr);
-      setWydaBalance("0");
-    }
+    const balance = await getWYDABalance(wallet);
+    setWydaBalance(balance);
   } catch (err) {
     console.error(err);
-    setMuseData({
-      wallet_address: address.toLowerCase(),
-      points: 0,
-      muse_level: 1,
-      unlocked_skins: ["default"],
-      current_skin: "default",
-      completed_missions: [],
-    });
-    setYmpPoints(0);
-    setWydaBalance("0");
     setError("fetchPoints failed");
   }
 };
+  useEffect(() => {
+    if (viewMode === "awards") {
+      ensureYearState(year);
+    }
+    if (viewMode === "markets") fetchTopics();
+  }, [year, viewMode, walletAddress]);
 
   useEffect(() => {
-    if (viewMode === 'awards') ensureYearState(year);
-    if (viewMode === 'markets') fetchTopics();
-  }, [year, viewMode, walletAddress]);
+    if (museSubTab === "archive") {
+      fetchArchivedCandidates(year)
+        .then(setArchivedCandidates)
+        .catch((err) => {
+          console.error("Failed to load archive", err);
+          setArchivedCandidates([]);
+        });
+    }
+  }, [museSubTab, year]);
 
   useEffect(() => {
     if (walletAddress) fetchPoints(walletAddress);
   }, [walletAddress]);
-
-  useEffect(() => {
-    const loadArchive = async () => {
-      if (museSubTab === "archive") {
-        const data = await fetchArchivedCandidates(year);
-        setArchivedCandidates(data);
-      }
-    };
-
-    loadArchive();
-  }, [museSubTab, year]);
 
   const handleConnect = async () => {
     try {
@@ -354,11 +353,12 @@ const fetchPoints = async (address: string) => {
         {
           title: newTopic.title,
           description: newTopic.description,
-          options: newTopic.options.filter(Boolean),
-          creator_address: walletAddress.toLowerCase(),
+          options: newTopic.options,
+          creator_address: walletAddress,
           status: "open",
         },
       ]);
+
       if (error) throw error;
 
       setShowCreateTopic(false);
@@ -370,16 +370,39 @@ const fetchPoints = async (address: string) => {
       setError(err.message);
     }
   };
+  const updateCandidate = async (candidate: Candidate) => {
+  try {
+    const { error } = await supabase
+      .from("candidates")
+      .update({
+        name: candidate.name,
+        story: candidate.story,
+        reason: candidate.reason,
+        image_url: candidate.image_url,
+        is_published: candidate.is_published
+      })
+      .eq("id", candidate.id);
+
+    if (error) throw error;
+
+    setSuccess("Candidate updated!");
+
+    // 🔥 핵심: 다시 불러오기
+    fetchCandidates(year);
+
+  } catch (err: any) {
+    setError(err.message);
+  }
+};
 
   const handleMarketVote = async (topicId: string, optionIndex: number) => {
     if (!walletAddress) return setError("Connect wallet to vote");
     try {
-      const voter_address = walletAddress.toLowerCase();
       const { data: existing, error: existingError } = await supabase
         .from("votes")
         .select("id")
         .eq("topic_id", topicId)
-        .eq("voter_address", voter_address);
+        .eq("voter_address", walletAddress);
 
       if (existingError) throw existingError;
       if (existing && existing.length > 0) {
@@ -389,10 +412,11 @@ const fetchPoints = async (address: string) => {
       const { error } = await supabase.from("votes").insert([
         {
           topic_id: topicId,
-          voter_address,
+          voter_address: walletAddress,
           option_index: optionIndex,
         },
       ]);
+
       if (error) throw error;
 
       fetchTopics();
@@ -404,39 +428,45 @@ const fetchPoints = async (address: string) => {
   };
 
   const completeMission = async (missionId: string) => {
-    if (!walletAddress || !museData) return;
-    if (museData.completed_missions.includes(missionId)) return;
-
-    const rewards: Record<string, number> = {
-      'market_vote': 450,
-      'lp_provide': 1200,
-      'play_games': 700
-    };
-
-    const reward = rewards[missionId] || 0;
-    const newPoints = (ympPoints || 0) + reward;
-    const newMissions = [...museData.completed_missions, missionId];
+    if (!walletAddress) return;
+    const wallet = walletAddress.toLowerCase();
 
     try {
-      const { error } = await supabase
-        .from("user_points")
-        .upsert({
-          wallet_address: walletAddress.toLowerCase(),
-          points: newPoints,
-          muse_level: museData.muse_level ?? 1,
-          unlocked_skins: museData.unlocked_skins ?? ["default"],
-          current_skin: museData.current_skin ?? "default",
-          completed_missions: newMissions,
-        }, { onConflict: "wallet_address" })
-        .select();
+      const current = await getOrCreateUserPoints(wallet);
+      if (current.completed_missions.includes(missionId)) return;
 
-      if (error) throw error;
+      const rewards: Record<string, number> = {
+        'market_vote': 450,
+        'lp_provide': 1200,
+        'play_games': 700,
+      };
 
-      setYmpPoints(newPoints);
-      setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
+      const reward = rewards[missionId] || 0;
+      const updated = await upsertUserPoints(wallet, {
+        points: (current.points ?? 0) + reward,
+        completed_missions: [...current.completed_missions, missionId],
+      });
+
+      setYmpPoints(updated.points ?? 0);
+      setMuseData(updated);
       setSuccess(`Mission Complete! +${reward} YMP`);
     } catch (err) {
       console.error("Failed to update mission", err);
+    }
+  };
+
+  const handleMissionNavigation = (missionId: string) => {
+    if (missionId === "play_games") {
+      setViewMode("arcade");
+      return;
+    }
+    if (missionId === "lp_provide") {
+      setViewMode("swap");
+      return;
+    }
+    if (missionId === "market_vote") {
+      setViewMode("markets");
+      return;
     }
   };
 
@@ -446,6 +476,7 @@ const fetchPoints = async (address: string) => {
         .from("topics")
         .update({ status: "resolved", winner_index: winnerIndex })
         .eq("id", topicId);
+
       if (topicError) throw topicError;
 
       const { data: winners, error: votesError } = await supabase
@@ -453,29 +484,15 @@ const fetchPoints = async (address: string) => {
         .select("voter_address")
         .eq("topic_id", topicId)
         .eq("option_index", winnerIndex);
+
       if (votesError) throw votesError;
 
-      if (winners?.length) {
-        for (const winner of winners) {
-          const address = winner.voter_address.toLowerCase();
-          const { data: current, error: currentError } = await supabase
-            .from("user_points")
-            .select("points, muse_level, unlocked_skins, current_skin, completed_missions")
-            .eq("wallet_address", address)
-            .maybeSingle();
-          if (currentError) throw currentError;
-
-          const currentPoints = current?.points ?? 0;
-          const newPoints = currentPoints + 3800;
-          await supabase.from("user_points").upsert({
-            wallet_address: address,
-            points: newPoints,
-            muse_level: current?.muse_level ?? 1,
-            unlocked_skins: current?.unlocked_skins ?? ["default"],
-            current_skin: current?.current_skin ?? "default",
-            completed_missions: current?.completed_missions ?? [],
-          }, { onConflict: "wallet_address" });
-        }
+      for (const winner of winners ?? []) {
+        const wallet = winner.voter_address.toLowerCase();
+        const current = await getOrCreateUserPoints(wallet);
+        await upsertUserPoints(wallet, {
+          points: (current.points ?? 0) + 3800,
+        });
       }
 
       fetchTopics();
@@ -487,21 +504,48 @@ const fetchPoints = async (address: string) => {
   };
 
   const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
-    if (!walletAddress || !isAdmin) return;
+    if (!walletAddress) return;
     try {
       const { error } = await supabase
         .from("candidates")
-        .update(updates)
+        .update({
+          name: updates.name,
+          story: updates.story,
+          reason: updates.reason,
+          image_url: updates.image_url,
+          is_published: updates.is_published,
+          archived: updates.archived,
+        } as any)
         .eq("id", id);
 
       if (error) throw error;
 
-      setSuccess("Candidate updated!");
       setEditingCandidate(null);
-      setShowAdminEdit(false);
       fetchCandidates(year);
+      const archived = await fetchArchivedCandidates(year);
+      setArchivedCandidates(archived);
+      setSuccess("Candidate updated successfully!");
     } catch (err: any) {
       setError(err.message);
+    }
+  };
+
+  const handleVote = async (candidate: Candidate) => {
+    if (!walletAddress) {
+      setError("Please connect your wallet first.");
+      return;
+    }
+    setVotingId(candidate.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await voteForCandidate(parseInt(candidate.id) - 1);
+      setSuccess(`Successfully voted for ${candidate.name}! 10 Wyda sent.`);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.reason || err.message || "Transaction failed. Make sure you have Wyda tokens and BNB for gas on BSC.");
+    } finally {
+      setVotingId(null);
     }
   };
 
@@ -548,28 +592,19 @@ const fetchPoints = async (address: string) => {
               </button>
             ))}
             {isAdmin && (
-              <>
-                <button 
-                  onClick={() => {
-                    setViewMode('awards');
-                    setShowAdminEdit(true);
-                  }}
-                  className={cn(
-                    "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                    showAdminEdit ? "bg-red-600 text-white" : "text-red-500/70 hover:text-red-500"
-                  )}
-                >
-                  <Code size={12} />
-                  Edit
-                </button>
-                <button
-                  onClick={handleInitializeYear}
-                  className="flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all border border-[#00ff00]/40 text-[#00ff00] hover:bg-[#00ff00]/10 rounded-sm"
-                >
-                  <Plus size={12} />
-                  Seed 5
-                </button>
-              </>
+              <button 
+                onClick={() => {
+                  setViewMode('awards');
+                  setShowAdminEdit(true);
+                }}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
+                  showAdminEdit ? "bg-red-600 text-white" : "text-red-500/70 hover:text-red-500"
+                )}
+              >
+                <Code size={12} />
+                Edit
+              </button>
             )}
           </nav>
         </div>
@@ -791,7 +826,7 @@ const fetchPoints = async (address: string) => {
                 </div>
               ) : (
                 candidates
-                  .filter(c => (showAdminEdit ? true : (isAdmin ? true : c.is_published)))
+                  .filter(c => showAdminEdit ? !c.is_published : c.is_published || isAdmin)
                   .map((candidate, idx) => (
                     <motion.div 
                     key={candidate.id}
@@ -1318,7 +1353,7 @@ const fetchPoints = async (address: string) => {
                           </div>
                         ) : (
                           <button 
-                            onClick={() => { if (mission.id === 'play_games') setViewMode('arcade'); else if (mission.id === 'lp_provide') setViewMode('swap'); else setViewMode('markets'); }}
+                            onClick={() => handleMissionNavigation(mission.id)}
                             className="text-[9px] text-white underline uppercase hover:text-[#00ff00]"
                           >
                             Go to Mission
@@ -1415,10 +1450,10 @@ const fetchPoints = async (address: string) => {
                           <p className="text-[10px] text-[#00ff00] font-bold">Reward: {q.reward} YMP</p>
                         </div>
                         <button 
-                          disabled={museData?.completed_missions.includes(q.id)}
-                          className="w-full py-2 border border-[#333] text-[9px] uppercase font-bold hover:border-[#00ff00] disabled:opacity-30"
+                          onClick={() => handleMissionNavigation(q.id)}
+                          className="w-full py-2 border border-[#333] text-[9px] uppercase font-bold hover:border-[#00ff00] transition-all"
                         >
-                          {museData?.completed_missions.includes(q.id) ? 'Claimed' : 'Start Quest'}
+                          {museData?.completed_missions.includes(q.id) ? 'Go to Mission' : 'Start Quest'}
                         </button>
                       </div>
                     ))}
@@ -1462,20 +1497,18 @@ const fetchPoints = async (address: string) => {
                   </div>
                   <div className="grid gap-6">
                     {archivedCandidates.length === 0 ? (
-                      <div className="p-6 border border-dashed border-[#333] text-[#888]">
-                        No archived candidates for {year}.
-                      </div>
+                      <p className="text-sm text-[#888]">No archived candidates for {year}.</p>
                     ) : (
                       archivedCandidates.map((item, i) => (
                         <div key={item.id ?? i} className="group p-6 border border-[#333] bg-[#0a0a0a] hover:border-[#ff4444]/50 transition-all">
                           <div className="flex justify-between items-start mb-4">
-                            <h4 className="text-lg font-bold uppercase text-[#ff4444]">{item.name}</h4>
+                            <h4 className="text-lg font-bold uppercase text-[#ff4444]">{item.name || `Archived Slot ${i + 1}`}</h4>
                             <span className="text-[9px] bg-[#ff4444]/10 text-[#ff4444] px-2 py-0.5 border border-[#ff4444]/30 uppercase font-bold">Archived</span>
                           </div>
-                          <p className="text-xs text-[#888] mb-4 italic">{item.story || 'Archived record.'}</p>
+                          <p className="text-xs text-[#888] mb-4 italic">{item.story || "This candidate is archived."}</p>
                           <div className="flex justify-between items-center">
                             <span className="text-[10px] text-[#555] uppercase">Reason:</span>
-                            <span className="text-[10px] text-[#00ff00] font-bold uppercase">{item.reason || 'N/A'}</span>
+                            <span className="text-[10px] text-[#00ff00] font-bold uppercase">{item.reason || "Awaiting input"}</span>
                           </div>
                         </div>
                       ))
@@ -1511,64 +1544,6 @@ const fetchPoints = async (address: string) => {
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-
-        {showAdminEdit && editingCandidate && (
-          <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-[#333] rounded-sm p-6 space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <h3 className="text-lg font-bold uppercase">Admin Candidate Editor</h3>
-                <button className="text-xs text-[#888]" onClick={() => { setShowAdminEdit(false); setEditingCandidate(null); }}>Close</button>
-              </div>
-              <input
-                value={editingCandidate.name || ''}
-                onChange={(e) => setEditingCandidate({ ...editingCandidate, name: e.target.value })}
-                className="w-full bg-black border border-[#333] p-2 text-sm text-white"
-                placeholder="Name"
-              />
-              <textarea
-                value={editingCandidate.story || ''}
-                onChange={(e) => setEditingCandidate({ ...editingCandidate, story: e.target.value })}
-                className="w-full bg-black border border-[#333] p-2 text-sm text-white h-24"
-                placeholder="Story"
-              />
-              <textarea
-                value={editingCandidate.reason || ''}
-                onChange={(e) => setEditingCandidate({ ...editingCandidate, reason: e.target.value })}
-                className="w-full bg-black border border-[#333] p-2 text-sm text-white h-16"
-                placeholder="Reason"
-              />
-              <input
-                value={editingCandidate.image_url || ''}
-                onChange={(e) => setEditingCandidate({ ...editingCandidate, image_url: e.target.value })}
-                className="w-full bg-black border border-[#333] p-2 text-sm text-white"
-                placeholder="Image URL"
-              />
-              <label className="flex items-center gap-2 text-sm text-white">
-                <input
-                  type="checkbox"
-                  checked={!!editingCandidate.is_published}
-                  onChange={(e) => setEditingCandidate({ ...editingCandidate, is_published: e.target.checked })}
-                />
-                Published
-              </label>
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => updateCandidate(editingCandidate)}
-                  className="flex-1 py-3 bg-[#00ff00] text-black font-bold uppercase"
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => { setShowAdminEdit(false); setEditingCandidate(null); }}
-                  className="flex-1 py-3 border border-[#333] text-white uppercase"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
           </div>
         )}
 
