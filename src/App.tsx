@@ -226,27 +226,25 @@ export default function App() {
 
   const fetchTopics = async () => {
     try {
-      const res = await fetch('/api/topics');
-      if (!res.ok) {
-        const errorData = await res.json();
-        if (errorData.error?.includes("Could not find the table")) {
-          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
-        }
-        throw new Error(errorData.error);
-      }
-      const data = await res.json();
-      setTopics(data);
-    } catch (err) {
+      const { data, error } = await supabase
+        .from("topics")
+        .select("*, votes(*)");
+
+      if (error) throw error;
+      setTopics((data as any) ?? []);
+    } catch (err: any) {
       console.error("Failed to fetch topics", err);
+      setError(err.message || "Failed to fetch topics");
     }
   };
 
 const fetchPoints = async (address: string) => {
   try {
+    const wallet = address.toLowerCase();
     const { data, error } = await supabase
       .from("user_points")
       .select("*")
-      .eq("wallet_address", address.toLowerCase())
+      .eq("wallet_address", wallet)
       .maybeSingle();
 
     if (error) {
@@ -254,19 +252,38 @@ const fetchPoints = async (address: string) => {
       return;
     }
 
-    if (!data) {
-      setError("No user data found");
-      return;
+    const defaultData: UserPoints = {
+      wallet_address: wallet,
+      points: 0,
+      muse_level: 1,
+      unlocked_skins: ["default"],
+      current_skin: "default",
+      completed_missions: [],
+    };
+
+    const next = (data as UserPoints | null) ?? defaultData;
+    setYmpPoints(next.points ?? 0);
+    setMuseData(next);
+
+    try {
+      const balance = await getWYDABalance(wallet);
+      setWydaBalance(balance);
+    } catch (balanceErr) {
+      console.error("Failed to fetch WYDA balance", balanceErr);
+      setWydaBalance("0");
     }
-
-    setYmpPoints(data.points ?? 0);
-    setMuseData(data);
-
-    const balance = await getWYDABalance(address);
-    setWydaBalance(balance);
-
   } catch (err) {
     console.error(err);
+    setMuseData({
+      wallet_address: address.toLowerCase(),
+      points: 0,
+      muse_level: 1,
+      unlocked_skins: ["default"],
+      current_skin: "default",
+      completed_missions: [],
+    });
+    setYmpPoints(0);
+    setWydaBalance("0");
     setError("fetchPoints failed");
   }
 };
@@ -331,49 +348,24 @@ const fetchPoints = async (address: string) => {
   const handleCreateTopic = async () => {
     if (!walletAddress) return setError("Connect wallet to create topic");
     if (!newTopic.title || !newTopic.description) return setError("Fill all fields");
-    
+
     try {
-      const res = await fetch('/api/topics', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newTopic, creator_address: walletAddress })
-      });
-      if (!res.ok) throw new Error("Failed to create topic");
+      const { error } = await supabase.from("topics").insert([
+        {
+          title: newTopic.title,
+          description: newTopic.description,
+          options: newTopic.options.filter(Boolean),
+          creator_address: walletAddress.toLowerCase(),
+          status: "open",
+        },
+      ]);
+      if (error) throw error;
+
       setShowCreateTopic(false);
       setNewTopic({ title: '', description: '', options: ['', ''] });
       fetchTopics();
       setSuccess("Topic created successfully!");
-      
-      // Mission Check: Create Market Vote (simulated as creation for now)
       completeMission('market_vote');
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-  const updateCandidate = async (candidate: Candidate) => {
-    try {
-      const { error } = await supabase
-        .from("candidates")
-        .update({
-          name: candidate.name,
-          story: candidate.story,
-          reason: candidate.reason,
-          image_url: candidate.image_url,
-          video_url: candidate.video_url,
-          is_published: candidate.is_published,
-          archived: candidate.archived ?? false
-        })
-        .eq("id", candidate.id);
-
-      if (error) throw error;
-
-      setSuccess("Candidate updated!");
-      setEditingCandidate(null);
-      setShowAdminEdit(false);
-      fetchCandidates(year);
-      const archived = await fetchArchivedCandidates(year);
-      setArchivedCandidates(archived);
-
     } catch (err: any) {
       setError(err.message);
     }
@@ -382,19 +374,29 @@ const fetchPoints = async (address: string) => {
   const handleMarketVote = async (topicId: string, optionIndex: number) => {
     if (!walletAddress) return setError("Connect wallet to vote");
     try {
-      const res = await fetch('/api/votes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic_id: topicId, voter_address: walletAddress, option_index: optionIndex })
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to vote");
+      const voter_address = walletAddress.toLowerCase();
+      const { data: existing, error: existingError } = await supabase
+        .from("votes")
+        .select("id")
+        .eq("topic_id", topicId)
+        .eq("voter_address", voter_address);
+
+      if (existingError) throw existingError;
+      if (existing && existing.length > 0) {
+        throw new Error("Already voted on this topic");
       }
+
+      const { error } = await supabase.from("votes").insert([
+        {
+          topic_id: topicId,
+          voter_address,
+          option_index: optionIndex,
+        },
+      ]);
+      if (error) throw error;
+
       fetchTopics();
       setSuccess("Vote cast successfully!");
-      
-      // Mission Check
       completeMission('market_vote');
     } catch (err: any) {
       setError(err.message);
@@ -412,24 +414,27 @@ const fetchPoints = async (address: string) => {
     };
 
     const reward = rewards[missionId] || 0;
-    const newPoints = ympPoints + reward;
+    const newPoints = (ympPoints || 0) + reward;
     const newMissions = [...museData.completed_missions, missionId];
 
     try {
-      const res = await fetch('/api/muse/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          wallet_address: walletAddress,
+      const { error } = await supabase
+        .from("user_points")
+        .upsert({
+          wallet_address: walletAddress.toLowerCase(),
           points: newPoints,
-          completed_missions: newMissions
-        })
-      });
-      if (res.ok) {
-        setYmpPoints(newPoints);
-        setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
-        setSuccess(`Mission Complete! +${reward} YMP`);
-      }
+          muse_level: museData.muse_level ?? 1,
+          unlocked_skins: museData.unlocked_skins ?? ["default"],
+          current_skin: museData.current_skin ?? "default",
+          completed_missions: newMissions,
+        }, { onConflict: "wallet_address" })
+        .select();
+
+      if (error) throw error;
+
+      setYmpPoints(newPoints);
+      setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
+      setSuccess(`Mission Complete! +${reward} YMP`);
     } catch (err) {
       console.error("Failed to update mission", err);
     }
@@ -437,12 +442,42 @@ const fetchPoints = async (address: string) => {
 
   const handleResolve = async (topicId: string, winnerIndex: number) => {
     try {
-      const res = await fetch(`/api/topics/${topicId}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ winner_index: winnerIndex })
-      });
-      if (!res.ok) throw new Error("Failed to resolve");
+      const { error: topicError } = await supabase
+        .from("topics")
+        .update({ status: "resolved", winner_index: winnerIndex })
+        .eq("id", topicId);
+      if (topicError) throw topicError;
+
+      const { data: winners, error: votesError } = await supabase
+        .from("votes")
+        .select("voter_address")
+        .eq("topic_id", topicId)
+        .eq("option_index", winnerIndex);
+      if (votesError) throw votesError;
+
+      if (winners?.length) {
+        for (const winner of winners) {
+          const address = winner.voter_address.toLowerCase();
+          const { data: current, error: currentError } = await supabase
+            .from("user_points")
+            .select("points, muse_level, unlocked_skins, current_skin, completed_missions")
+            .eq("wallet_address", address)
+            .maybeSingle();
+          if (currentError) throw currentError;
+
+          const currentPoints = current?.points ?? 0;
+          const newPoints = currentPoints + 3800;
+          await supabase.from("user_points").upsert({
+            wallet_address: address,
+            points: newPoints,
+            muse_level: current?.muse_level ?? 1,
+            unlocked_skins: current?.unlocked_skins ?? ["default"],
+            current_skin: current?.current_skin ?? "default",
+            completed_missions: current?.completed_missions ?? [],
+          }, { onConflict: "wallet_address" });
+        }
+      }
+
       fetchTopics();
       if (walletAddress) fetchPoints(walletAddress);
       setSuccess("Topic resolved and points awarded!");
@@ -452,38 +487,21 @@ const fetchPoints = async (address: string) => {
   };
 
   const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
-    if (!walletAddress) return;
+    if (!walletAddress || !isAdmin) return;
     try {
-      const res = await fetch(`/api/candidates/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...updates, adminAddress: walletAddress })
-      });
-      if (!res.ok) throw new Error("Failed to update candidate");
+      const { error } = await supabase
+        .from("candidates")
+        .update(updates)
+        .eq("id", id);
+
+      if (error) throw error;
+
+      setSuccess("Candidate updated!");
       setEditingCandidate(null);
+      setShowAdminEdit(false);
       fetchCandidates(year);
-      setSuccess("Candidate updated successfully!");
     } catch (err: any) {
       setError(err.message);
-    }
-  };
-
-  const handleVote = async (candidate: Candidate) => {
-    if (!walletAddress) {
-      setError("Please connect your wallet first.");
-      return;
-    }
-    setVotingId(candidate.id);
-    setError(null);
-    setSuccess(null);
-    try {
-      await voteForCandidate(parseInt(candidate.id) - 1);
-      setSuccess(`Successfully voted for ${candidate.name}! 10 Wyda sent.`);
-    } catch (err: any) {
-      console.error(err);
-      setError(err.reason || err.message || "Transaction failed. Make sure you have Wyda tokens and BNB for gas on BSC.");
-    } finally {
-      setVotingId(null);
     }
   };
 
