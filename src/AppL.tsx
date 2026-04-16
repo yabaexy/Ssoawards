@@ -114,6 +114,20 @@ export default function App() {
   const [museData, setMuseData] = useState<UserPoints | null>(null);
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
 
+  const handleMissionNavigation = (missionId: string) => {
+    if (missionId === 'play_games') {
+      setViewMode('arcade');
+      return;
+    }
+    if (missionId === 'lp_provide') {
+      setViewMode('swap');
+      return;
+    }
+    if (missionId === 'market_vote') {
+      setViewMode('markets');
+    }
+  };
+
   const fetchCandidates = async (targetYear: number) => {
   setLoading(true);
   setError(null);
@@ -225,25 +239,6 @@ const fetchPoints = async (address: string) => {
   useEffect(() => {
     if (walletAddress) fetchPoints(walletAddress);
   }, [walletAddress]);
-
-  const goToMission = (missionId: string) => {
-    if (missionId === 'play_games') {
-      setViewMode('arcade');
-      setMuseSubTab('quests');
-      return;
-    }
-    if (missionId === 'lp_provide') {
-      setViewMode('swap');
-      setMuseSubTab('quests');
-      return;
-    }
-    if (missionId === 'market_vote') {
-      setViewMode('markets');
-      setMuseSubTab('quests');
-      return;
-    }
-  };
-
 
   const handleConnect = async () => {
     try {
@@ -1307,7 +1302,7 @@ const fetchPoints = async (address: string) => {
                           </div>
                         ) : (
                           <button 
-                            onClick={() => goToMission(mission.id)}
+                            onClick={() => handleMissionNavigation(mission.id)}
                             className="text-[9px] text-white underline uppercase hover:text-[#00ff00]"
                           >
                             Go to Mission
@@ -1404,11 +1399,11 @@ const fetchPoints = async (address: string) => {
                           <p className="text-[10px] text-[#00ff00] font-bold">Reward: {q.reward} YMP</p>
                         </div>
                         <button 
-                          onClick={() => goToMission(q.id)}
+                          onClick={() => handleMissionNavigation(q.id)}
                           disabled={museData?.completed_missions.includes(q.id)}
                           className="w-full py-2 border border-[#333] text-[9px] uppercase font-bold hover:border-[#00ff00] disabled:opacity-30"
                         >
-                          {museData?.completed_missions.includes(q.id) ? 'Claimed' : q.id === 'play_games' ? 'Go to Arcade' : q.id === 'lp_provide' ? 'Go to Swap' : 'Go to Markets'}
+                          {museData?.completed_missions.includes(q.id) ? 'Claimed' : 'Start Quest'}
                         </button>
                       </div>
                     ))}
