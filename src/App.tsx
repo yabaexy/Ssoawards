@@ -43,6 +43,7 @@ import {
 import { generateCandidates, type Candidate } from "./lib/gemini";
 import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity, getWYDABalance } from "./lib/web3";
 import { cn } from "./lib/utils";
+
 // Game Components
 import Reversi from "./components/games/Reversi";
 import ChessGame from "./components/games/Chess";
@@ -65,7 +66,6 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('awards');
   const [activeGame, setActiveGame] = useState<GameType>('sonoban');
   const [gamesPlayed, setGamesPlayed] = useState<Set<string>>(new Set());
-  const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
 
   useEffect(() => {
     if (viewMode === 'arcade') {
@@ -79,16 +79,6 @@ export default function App() {
       });
     }
   }, [activeGame, viewMode]);
-  useEffect(() => {
-  const loadArchive = async () => {
-    if (museSubTab === "archive") {
-      const data = await fetchArchivedCandidates(year);
-      setArchivedCandidates(data);
-    }
-  };
-
-  loadArchive();
-}, [museSubTab, year]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,16 +91,6 @@ export default function App() {
   const [wydaBalance, setWydaBalance] = useState("0");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAdminEdit, setShowAdminEdit] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newCandidate, setNewCandidate] = useState({
-    name: "",
-    story: "",
-    reason: "",
-    image_url: "",
-    year: new Date().getFullYear(),
-    is_published: false,
-    archived: false,
-  });
 
   const isAdmin = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
 
@@ -124,169 +104,138 @@ export default function App() {
   // Muse State
   const [museData, setMuseData] = useState<UserPoints | null>(null);
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
-
-  const handleMissionNavigation = (missionId: string) => {
-    if (missionId === 'play_games') {
-      setViewMode('arcade');
-      return;
-    }
-    if (missionId === 'lp_provide') {
-      setViewMode('swap');
-      return;
-    }
-    if (missionId === 'market_vote') {
-      setViewMode('markets');
-    }
-  };
+  const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
 
   const fetchCandidates = async (targetYear: number) => {
-  setLoading(true);
-  setError(null);
-
-  try {
-    let query = supabase
-      .from("candidates")
-      .select("*")
-      .eq("year", targetYear)
-      .eq("archived", false);
-
-    if (!isAdmin) {
-      query = query.eq("is_published", true);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    setCandidates(data ?? []);
-  } catch (err: any) {
-    console.error("Fetch error:", err);
-    setError(`Failed to fetch candidates: ${err.message}`);
-  } finally {
-    setLoading(false);
-  }
-};
-// ===== Year Auto Management =====
-
-const makeDraftCandidate = (targetYear: number, index: number) => ({
-  name: `Draft ${index + 1}`,
-  story: "",
-  reason: "",
-  year: targetYear,
-  image_url: `https://picsum.photos/seed/${targetYear}-${index}/800/600`,
-  video_url: "",
-  is_published: false,
-  archived: false,
-});
-
-const archiveCandidatesForYear = async (targetYear: number) => {
-  const { error } = await supabase
-    .from("candidates")
-    .update({ archived: true, is_published: false })
-    .eq("year", targetYear);
-
-  if (error) throw error;
-};
-
-const seedFiveCandidatesForYear = async (targetYear: number) => {
-  const drafts = Array.from({ length: 5 }, (_, i) =>
-    makeDraftCandidate(targetYear, i)
-  );
-
-  const { error } = await supabase
-    .from("candidates")
-    .insert(drafts);
-
-  if (error) throw error;
-};
-
-const fetchArchivedCandidates = async (targetYear: number) => {
-  const { data, error } = await supabase
-    .from("candidates")
-    .select("*")
-    .eq("year", targetYear)
-    .eq("archived", true)
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    console.error(error);
-    return [];
-  }
-
-  return data ?? [];
-};
-
-const ensureYearState = async (targetYear: number) => {
-  setLoading(true);
-  setError(null);
-
-  try {
-    const currentYear = new Date().getFullYear();
-
-    // ✅ 과거 연도면 archive
-    if (targetYear < currentYear) {
-      await archiveCandidatesForYear(targetYear);
-    }
-
-    // ✅ 현재 연도 데이터 확인
-    const { data, error } = await supabase
-      .from("candidates")
-      .select("*")
-      .eq("year", targetYear)
-      .eq("archived", false);
-
-    if (error) throw error;
-
-    // ✅ 없으면 자동 생성
-    if (!data || data.length === 0) {
-      await seedFiveCandidatesForYear(targetYear);
-    }
-
-    // ✅ 메인 + Admin 동일 데이터
-    await fetchCandidates(targetYear);
-
-  } catch (err: any) {
-    console.error("ensureYearState error:", err);
-    setError(err.message);
-  } finally {
-    setLoading(false);
-  }
-};
-
-  const handleInitializeYear = async () => {
-    if (!isAdmin || !walletAddress) return;
     setLoading(true);
-    try {
-      const emptySlots = Array.from({ length: 5 }).map((_, i) => ({
-        name: "",
-        story: "",
-        reason: "",
-        year,
-        is_published: false,
-        archived: false,
-        image_url: `https://picsum.photos/seed/empty-${year}-${i}/800/600`,
-      }));
+    setError(null);
 
-      const { error } = await supabase.from("candidates").insert(emptySlots);
+    try {
+      let query = supabase
+        .from("candidates")
+        .select("*")
+        .eq("year", targetYear)
+        .eq("archived", false)
+        .order("created_at", { ascending: false });
+
+      if (!isAdmin) {
+        query = query.eq("is_published", true);
+      }
+
+      const { data, error } = await query;
+
       if (error) throw error;
 
-      setSuccess(`Initialized 5 empty slots for ${year}`);
-      fetchCandidates(year);
+      setCandidates(data ?? []);
     } catch (err: any) {
-      setError(err.message);
+      console.error("Fetch error:", err);
+      setError(`Failed to fetch candidates: ${err.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchTopics = async () => {
+  const archiveCandidatesForYear = async (targetYear: number) => {
+    const { error } = await supabase
+      .from("candidates")
+      .update({ archived: true, is_published: false })
+      .eq("year", targetYear)
+      .eq("archived", false);
+
+    if (error) throw error;
+  };
+
+  const seedFiveCandidatesForYear = async (targetYear: number) => {
+    const drafts = Array.from({ length: 5 }).map((_, i) => ({
+      name: `Draft ${i + 1}`,
+      story: "",
+      reason: "",
+      year: targetYear,
+      image_url: `https://picsum.photos/seed/${targetYear}-${i}/800/600`,
+      video_url: "",
+      is_published: false,
+      archived: false
+    }));
+
+    const { error } = await supabase
+      .from("candidates")
+      .insert(drafts);
+
+    if (error) throw error;
+  };
+
+  const fetchArchivedCandidates = async (targetYear: number) => {
+    const { data, error } = await supabase
+      .from("candidates")
+      .select("*")
+      .eq("year", targetYear)
+      .eq("archived", true)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      return [];
+    }
+
+    return data ?? [];
+  };
+
+  const ensureYearState = async (targetYear: number) => {
+    setLoading(true);
+    setError(null);
+
     try {
+      const currentYear = new Date().getFullYear();
+
+      if (targetYear < currentYear) {
+        await archiveCandidatesForYear(targetYear);
+      }
+
       const { data, error } = await supabase
-        .from("topics")
-        .select("*, votes(*)");
+        .from("candidates")
+        .select("id")
+        .eq("year", targetYear)
+        .eq("archived", false);
 
       if (error) throw error;
-      setTopics((data as any) ?? []);
+
+      if (!data || data.length === 0) {
+        await seedFiveCandidatesForYear(targetYear);
+      }
+
+      await fetchCandidates(targetYear);
+    } catch (err: any) {
+      console.error("ensureYearState error:", err);
+      setError(err.message || "Failed to prepare year data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleInitializeYear = async () => {
+    if (!isAdmin || !walletAddress) return;
+    try {
+      await seedFiveCandidatesForYear(year);
+      setSuccess(`Initialized 5 empty slots for ${year}`);
+      fetchCandidates(year);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+
+  const fetchTopics = async () => {
+    try {
+      const res = await fetch('/api/topics');
+      if (!res.ok) {
+        const errorData = await res.json();
+        if (errorData.error?.includes("Could not find the table")) {
+          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
+        }
+        throw new Error(errorData.error);
+      }
+      const data = await res.json();
+      setTopics(data);
     } catch (err) {
       console.error("Failed to fetch topics", err);
     }
@@ -294,11 +243,10 @@ const ensureYearState = async (targetYear: number) => {
 
 const fetchPoints = async (address: string) => {
   try {
-    const wallet = address.toLowerCase();
     const { data, error } = await supabase
       .from("user_points")
       .select("*")
-      .eq("wallet_address", wallet)
+      .eq("wallet_address", address.toLowerCase())
       .maybeSingle();
 
     if (error) {
@@ -306,40 +254,42 @@ const fetchPoints = async (address: string) => {
       return;
     }
 
-    const defaultData = {
-      wallet_address: wallet,
-      points: 0,
-      muse_level: 1,
-      unlocked_skins: ["default"],
-      current_skin: "default",
-      completed_missions: [],
-    } as UserPoints;
+    if (!data) {
+      setError("No user data found");
+      return;
+    }
 
-    const next = (data as UserPoints | null) ?? defaultData;
-    setYmpPoints(next.points ?? 0);
-    setMuseData(next);
+    setYmpPoints(data.points ?? 0);
+    setMuseData(data);
 
-    const balance = await getWYDABalance(wallet);
+    const balance = await getWYDABalance(address);
     setWydaBalance(balance);
+
   } catch (err) {
     console.error(err);
     setError("fetchPoints failed");
   }
 };
 
-useEffect(() => {
-  if (viewMode === "awards") {
-    ensureYearState(year);
-  }
-
-  if (viewMode === "markets") {
-    fetchTopics();
-  }
-}, [year, viewMode, walletAddress]);
+  useEffect(() => {
+    if (viewMode === 'awards') ensureYearState(year);
+    if (viewMode === 'markets') fetchTopics();
+  }, [year, viewMode, walletAddress]);
 
   useEffect(() => {
     if (walletAddress) fetchPoints(walletAddress);
   }, [walletAddress]);
+
+  useEffect(() => {
+    const loadArchive = async () => {
+      if (museSubTab === "archive") {
+        const data = await fetchArchivedCandidates(year);
+        setArchivedCandidates(data);
+      }
+    };
+
+    loadArchive();
+  }, [museSubTab, year]);
 
   const handleConnect = async () => {
     try {
@@ -381,64 +331,39 @@ useEffect(() => {
   const handleCreateTopic = async () => {
     if (!walletAddress) return setError("Connect wallet to create topic");
     if (!newTopic.title || !newTopic.description) return setError("Fill all fields");
-
+    
     try {
-      const { error } = await supabase.from("topics").insert([
-        {
-          title: newTopic.title,
-          description: newTopic.description,
-          options: newTopic.options.filter(Boolean),
-          creator_address: walletAddress,
-          status: "open",
-        },
-      ]);
-      if (error) throw error;
-
+      const res = await fetch('/api/topics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newTopic, creator_address: walletAddress })
+      });
+      if (!res.ok) throw new Error("Failed to create topic");
       setShowCreateTopic(false);
       setNewTopic({ title: '', description: '', options: ['', ''] });
       fetchTopics();
       setSuccess("Topic created successfully!");
+      
+      // Mission Check: Create Market Vote (simulated as creation for now)
       completeMission('market_vote');
     } catch (err: any) {
       setError(err.message);
     }
   };
-
-  const createCandidate = async () => {
-    if (!walletAddress || !isAdmin) return;
-    try {
-      const { error } = await supabase.from("candidates").insert([
-        {
-          ...newCandidate,
-          year,
-          archived: false,
-        },
-      ]);
-      if (error) throw error;
-      setShowCreateModal(false);
-      setNewCandidate({
-        name: "",
-        story: "",
-        reason: "",
-        image_url: "",
-        year,
-        is_published: false,
-        archived: false,
-      });
-      fetchCandidates(year);
-      setSuccess("Candidate created successfully!");
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
-    if (!walletAddress || !isAdmin) return;
+  const updateCandidate = async (candidate: Candidate) => {
     try {
       const { error } = await supabase
         .from("candidates")
-        .update(updates)
-        .eq("id", id);
+        .update({
+          name: candidate.name,
+          story: candidate.story,
+          reason: candidate.reason,
+          image_url: candidate.image_url,
+          video_url: candidate.video_url,
+          is_published: candidate.is_published,
+          archived: candidate.archived ?? false
+        })
+        .eq("id", candidate.id);
 
       if (error) throw error;
 
@@ -446,6 +371,9 @@ useEffect(() => {
       setEditingCandidate(null);
       setShowAdminEdit(false);
       fetchCandidates(year);
+      const archived = await fetchArchivedCandidates(year);
+      setArchivedCandidates(archived);
+
     } catch (err: any) {
       setError(err.message);
     }
@@ -454,29 +382,19 @@ useEffect(() => {
   const handleMarketVote = async (topicId: string, optionIndex: number) => {
     if (!walletAddress) return setError("Connect wallet to vote");
     try {
-      const voter_address = walletAddress.toLowerCase();
-      const { data: existing, error: existingError } = await supabase
-        .from("votes")
-        .select("id")
-        .eq("topic_id", topicId)
-        .eq("voter_address", voter_address);
-
-      if (existingError) throw existingError;
-      if (existing && existing.length > 0) {
-        throw new Error("Already voted on this topic");
+      const res = await fetch('/api/votes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: topicId, voter_address: walletAddress, option_index: optionIndex })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to vote");
       }
-
-      const { error } = await supabase.from("votes").insert([
-        {
-          topic_id: topicId,
-          voter_address,
-          option_index: optionIndex,
-        },
-      ]);
-      if (error) throw error;
-
       fetchTopics();
       setSuccess("Vote cast successfully!");
+      
+      // Mission Check
       completeMission('market_vote');
     } catch (err: any) {
       setError(err.message);
@@ -494,27 +412,24 @@ useEffect(() => {
     };
 
     const reward = rewards[missionId] || 0;
-    const newPoints = (ympPoints || 0) + reward;
+    const newPoints = ympPoints + reward;
     const newMissions = [...museData.completed_missions, missionId];
 
     try {
-      const { error } = await supabase
-        .from("user_points")
-        .upsert({
-          wallet_address: walletAddress.toLowerCase(),
+      const res = await fetch('/api/muse/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
           points: newPoints,
-          muse_level: museData.muse_level ?? 1,
-          unlocked_skins: museData.unlocked_skins ?? ["default"],
-          current_skin: museData.current_skin ?? "default",
-          completed_missions: newMissions,
+          completed_missions: newMissions
         })
-        .select();
-
-      if (error) throw error;
-
-      setYmpPoints(newPoints);
-      setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
-      setSuccess(`Mission Complete! +${reward} YMP`);
+      });
+      if (res.ok) {
+        setYmpPoints(newPoints);
+        setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
+        setSuccess(`Mission Complete! +${reward} YMP`);
+      }
     } catch (err) {
       console.error("Failed to update mission", err);
     }
@@ -522,42 +437,12 @@ useEffect(() => {
 
   const handleResolve = async (topicId: string, winnerIndex: number) => {
     try {
-      const { error: topicError } = await supabase
-        .from("topics")
-        .update({ status: "resolved", winner_index: winnerIndex })
-        .eq("id", topicId);
-      if (topicError) throw topicError;
-
-      const { data: winners, error: votesError } = await supabase
-        .from("votes")
-        .select("voter_address")
-        .eq("topic_id", topicId)
-        .eq("option_index", winnerIndex);
-      if (votesError) throw votesError;
-
-      if (winners?.length) {
-        for (const winner of winners) {
-          const address = winner.voter_address.toLowerCase();
-          const { data: current, error: currentError } = await supabase
-            .from("user_points")
-            .select("points, muse_level, unlocked_skins, current_skin, completed_missions")
-            .eq("wallet_address", address)
-            .maybeSingle();
-          if (currentError) throw currentError;
-
-          const currentPoints = current?.points ?? 0;
-          const newPoints = currentPoints + 3800;
-          await supabase.from("user_points").upsert({
-            wallet_address: address,
-            points: newPoints,
-            muse_level: current?.muse_level ?? 1,
-            unlocked_skins: current?.unlocked_skins ?? ["default"],
-            current_skin: current?.current_skin ?? "default",
-            completed_missions: current?.completed_missions ?? [],
-          });
-        }
-      }
-
+      const res = await fetch(`/api/topics/${topicId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ winner_index: winnerIndex })
+      });
+      if (!res.ok) throw new Error("Failed to resolve");
       fetchTopics();
       if (walletAddress) fetchPoints(walletAddress);
       setSuccess("Topic resolved and points awarded!");
@@ -566,9 +451,24 @@ useEffect(() => {
     }
   };
 
+  const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
+    if (!walletAddress) return;
+    try {
+      const res = await fetch(`/api/candidates/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...updates, adminAddress: walletAddress })
+      });
+      if (!res.ok) throw new Error("Failed to update candidate");
+      setEditingCandidate(null);
+      fetchCandidates(year);
+      setSuccess("Candidate updated successfully!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   const handleVote = async (candidate: Candidate) => {
-
-
     if (!walletAddress) {
       setError("Please connect your wallet first.");
       return;
@@ -630,19 +530,28 @@ useEffect(() => {
               </button>
             ))}
             {isAdmin && (
-              <button 
-                onClick={() => {
-                  setViewMode('awards');
-                  setShowAdminEdit(true);
-                }}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
-                  showAdminEdit ? "bg-red-600 text-white" : "text-red-500/70 hover:text-red-500"
-                )}
-              >
-                <Code size={12} />
-                Edit
-              </button>
+              <>
+                <button 
+                  onClick={() => {
+                    setViewMode('awards');
+                    setShowAdminEdit(true);
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all",
+                    showAdminEdit ? "bg-red-600 text-white" : "text-red-500/70 hover:text-red-500"
+                  )}
+                >
+                  <Code size={12} />
+                  Edit
+                </button>
+                <button
+                  onClick={handleInitializeYear}
+                  className="flex items-center gap-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest transition-all border border-[#00ff00]/40 text-[#00ff00] hover:bg-[#00ff00]/10 rounded-sm"
+                >
+                  <Plus size={12} />
+                  Seed 5
+                </button>
+              </>
             )}
           </nav>
         </div>
@@ -750,18 +659,6 @@ useEffect(() => {
                     >
                       <Code size={18} />
                       Admin Edit
-                    </button>
-                  )}
-                  {isAdmin && (
-                    <button
-                      onClick={() => {
-                        setShowCreateModal(true);
-                        setIsMobileMenuOpen(false);
-                      }}
-                      className="flex items-center gap-4 px-4 py-4 text-sm font-bold uppercase tracking-widest transition-all border border-[#00ff00]/30 rounded-sm text-[#00ff00] hover:bg-[#00ff00]/10"
-                    >
-                      <Plus size={18} />
-                      Create Candidate
                     </button>
                   )}
                 </nav>
@@ -876,7 +773,7 @@ useEffect(() => {
                 </div>
               ) : (
                 candidates
-                  .filter(c => showAdminEdit ? true : c.is_published || isAdmin)
+                  .filter(c => (showAdminEdit ? true : (isAdmin ? true : c.is_published)))
                   .map((candidate, idx) => (
                     <motion.div 
                     key={candidate.id}
@@ -1278,7 +1175,6 @@ useEffect(() => {
                   Swap USDT to WYDA
                 </button>
               </div>
-              
 
               <div className="space-y-4 pt-6 border-t border-[#333]">
                 <div className="flex justify-between items-center">
@@ -1310,32 +1206,6 @@ useEffect(() => {
                   Custom LP: {swapAmount} USDT
                 </button>
               </div>
-              <div className="flex gap-3">
-  <a
-    href="https://apeswap.finance/swap?inputCurrency=0x55d398326f99059fF775485246999027B3197955&outputCurrency=0xD84B7E8b295d9Fa9656527AC33Bf4F683aE7d2C4"
-    target="_blank"
-    rel="noopener noreferrer"
-    className="flex-1 py-3 text-center border border-yellow-500 text-yellow-400 text-[10px] font-bold uppercase tracking-widest hover:bg-yellow-500/10 transition-all"
-  >
-    Open in ApeSwap (Swap)
-  </a>
-
-  <button
-    onClick={() => handleSwap("1")}
-    disabled={isProcessing}
-    className="flex-1 py-3 bg-[#00ff00] text-black font-bold uppercase"
-  >
-    {isProcessing ? "Processing..." : "Quick Swap"}
-  </button>
-</div>
-              <a
-  href="https://apeswap.finance/add-liquidity/0x55d398326f99059fF775485246999027B3197955/0xD84B7E8b295d9Fa9656527AC33Bf4F683aE7d2C4"
-  target="_blank"
-  rel="noopener noreferrer"
-  className="block w-full py-3 text-center border border-yellow-500 text-yellow-400 text-[10px] font-bold uppercase tracking-widest hover:bg-yellow-500/10 transition-all"
->
-  Open in ApeSwap (Add LP)
-</a>
 
               <div className="p-4 bg-black/50 border border-[#333] rounded-sm">
                 <p className="text-[9px] text-[#555] leading-relaxed uppercase">
@@ -1430,7 +1300,7 @@ useEffect(() => {
                           </div>
                         ) : (
                           <button 
-                            onClick={() => handleMissionNavigation(mission.id)}
+                            onClick={() => { if (mission.id === 'play_games') setViewMode('arcade'); else if (mission.id === 'lp_provide') setViewMode('swap'); else setViewMode('markets'); }}
                             className="text-[9px] text-white underline uppercase hover:text-[#00ff00]"
                           >
                             Go to Mission
@@ -1472,7 +1342,6 @@ useEffect(() => {
                     </button>
                   </div>
                 </div>
-             
 
                 <div className="space-y-6">
                   <div className="flex items-center gap-4">
@@ -1528,7 +1397,6 @@ useEffect(() => {
                           <p className="text-[10px] text-[#00ff00] font-bold">Reward: {q.reward} YMP</p>
                         </div>
                         <button 
-                          onClick={() => handleMissionNavigation(q.id)}
                           disabled={museData?.completed_missions.includes(q.id)}
                           className="w-full py-2 border border-[#333] text-[9px] uppercase font-bold hover:border-[#00ff00] disabled:opacity-30"
                         >
@@ -1575,23 +1443,25 @@ useEffect(() => {
                     <h3 className="text-2xl font-black uppercase tracking-tighter">Darwin Archive</h3>
                   </div>
                   <div className="grid gap-6">
-                    {[
-                      { name: 'Seo Se-won', crime: 'Unauthorized Business', lesson: 'Avoid unauthorized business ventures at all costs.', reward: '3,000 YMP + Badge' },
-                      { name: 'Kim Ki-duk', crime: 'Exploitation', lesson: 'Never exploit others for your own gain.', reward: '4,000 YMP + Skin' },
-                      { name: 'Stockton Rush', crime: 'Safety Neglect', lesson: 'Safety is not a luxury, it is a requirement.', reward: '5,000 YMP + Frame' },
-                    ].map((item, i) => (
-                      <div key={i} className="group p-6 border border-[#333] bg-[#0a0a0a] hover:border-[#ff4444]/50 transition-all">
-                        <div className="flex justify-between items-start mb-4">
-                          <h4 className="text-lg font-bold uppercase text-[#ff4444]">{item.name}</h4>
-                          <span className="text-[9px] bg-[#ff4444]/10 text-[#ff4444] px-2 py-0.5 border border-[#ff4444]/30 uppercase font-bold">{item.crime}</span>
-                        </div>
-                        <p className="text-xs text-[#888] mb-4 italic">"{item.lesson}"</p>
-                        <div className="flex justify-between items-center">
-                          <span className="text-[10px] text-[#555] uppercase">Achievement Reward:</span>
-                          <span className="text-[10px] text-[#00ff00] font-bold uppercase">{item.reward}</span>
-                        </div>
+                    {archivedCandidates.length === 0 ? (
+                      <div className="p-6 border border-dashed border-[#333] text-[#888]">
+                        No archived candidates for {year}.
                       </div>
-                    ))}
+                    ) : (
+                      archivedCandidates.map((item, i) => (
+                        <div key={item.id ?? i} className="group p-6 border border-[#333] bg-[#0a0a0a] hover:border-[#ff4444]/50 transition-all">
+                          <div className="flex justify-between items-start mb-4">
+                            <h4 className="text-lg font-bold uppercase text-[#ff4444]">{item.name}</h4>
+                            <span className="text-[9px] bg-[#ff4444]/10 text-[#ff4444] px-2 py-0.5 border border-[#ff4444]/30 uppercase font-bold">Archived</span>
+                          </div>
+                          <p className="text-xs text-[#888] mb-4 italic">{item.story || 'Archived record.'}</p>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] text-[#555] uppercase">Reason:</span>
+                            <span className="text-[10px] text-[#00ff00] font-bold uppercase">{item.reason || 'N/A'}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
 
@@ -1626,120 +1496,56 @@ useEffect(() => {
           </div>
         )}
 
-        {showCreateModal && isAdmin && (
-          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-[#333] p-6 rounded-sm space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <h3 className="text-lg font-black uppercase tracking-tighter">Create Candidate</h3>
-                <button onClick={() => setShowCreateModal(false)} className="text-xs uppercase text-[#888] hover:text-white">Close</button>
-              </div>
-              <input
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
-                value={newCandidate.name}
-                onChange={(e) => setNewCandidate({ ...newCandidate, name: e.target.value })}
-                placeholder="Candidate Name"
-              />
-              <textarea
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-28"
-                value={newCandidate.story}
-                onChange={(e) => setNewCandidate({ ...newCandidate, story: e.target.value })}
-                placeholder="Story"
-              />
-              <textarea
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-20"
-                value={newCandidate.reason}
-                onChange={(e) => setNewCandidate({ ...newCandidate, reason: e.target.value })}
-                placeholder="Reason"
-              />
-              <input
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
-                value={newCandidate.image_url}
-                onChange={(e) => setNewCandidate({ ...newCandidate, image_url: e.target.value })}
-                placeholder="Image URL"
-              />
-              <div className="flex items-center gap-2 text-sm">
-                <input
-                  id="candidate-published"
-                  type="checkbox"
-                  checked={newCandidate.is_published}
-                  onChange={(e) => setNewCandidate({ ...newCandidate, is_published: e.target.checked })}
-                />
-                <label htmlFor="candidate-published">Published</label>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={createCandidate}
-                  className="flex-1 py-3 bg-[#00ff00] text-black font-black uppercase tracking-widest"
-                >
-                  Create
-                </button>
-                <button
-                  onClick={() => setShowCreateModal(false)}
-                  className="flex-1 py-3 border border-[#333] font-bold uppercase tracking-widest"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {showAdminEdit && editingCandidate && (
-          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-[#333] p-6 rounded-sm space-y-4">
+          <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-[#333] rounded-sm p-6 space-y-4">
               <div className="flex items-center justify-between gap-4">
-                <h3 className="text-lg font-black uppercase tracking-tighter">Edit Candidate</h3>
-                <button onClick={() => { setEditingCandidate(null); setShowAdminEdit(false); }} className="text-xs uppercase text-[#888] hover:text-white">Close</button>
+                <h3 className="text-lg font-bold uppercase">Admin Candidate Editor</h3>
+                <button className="text-xs text-[#888]" onClick={() => { setShowAdminEdit(false); setEditingCandidate(null); }}>Close</button>
               </div>
               <input
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
-                value={editingCandidate.name}
+                value={editingCandidate.name || ''}
                 onChange={(e) => setEditingCandidate({ ...editingCandidate, name: e.target.value })}
-                placeholder="Candidate Name"
+                className="w-full bg-black border border-[#333] p-2 text-sm text-white"
+                placeholder="Name"
               />
               <textarea
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-28"
-                value={editingCandidate.story}
+                value={editingCandidate.story || ''}
                 onChange={(e) => setEditingCandidate({ ...editingCandidate, story: e.target.value })}
+                className="w-full bg-black border border-[#333] p-2 text-sm text-white h-24"
                 placeholder="Story"
               />
               <textarea
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-20"
-                value={editingCandidate.reason}
+                value={editingCandidate.reason || ''}
                 onChange={(e) => setEditingCandidate({ ...editingCandidate, reason: e.target.value })}
+                className="w-full bg-black border border-[#333] p-2 text-sm text-white h-16"
                 placeholder="Reason"
               />
               <input
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
-                value={editingCandidate.image_url ?? ""}
+                value={editingCandidate.image_url || ''}
                 onChange={(e) => setEditingCandidate({ ...editingCandidate, image_url: e.target.value })}
+                className="w-full bg-black border border-[#333] p-2 text-sm text-white"
                 placeholder="Image URL"
               />
-              <div className="flex items-center gap-2 text-sm">
+              <label className="flex items-center gap-2 text-sm text-white">
                 <input
-                  id="candidate-edit-published"
                   type="checkbox"
                   checked={!!editingCandidate.is_published}
                   onChange={(e) => setEditingCandidate({ ...editingCandidate, is_published: e.target.checked })}
                 />
-                <label htmlFor="candidate-edit-published">Published</label>
-              </div>
+                Published
+              </label>
               <div className="flex gap-3 pt-2">
                 <button
-                  onClick={() => handleUpdateCandidate(editingCandidate.id, {
-                    name: editingCandidate.name,
-                    story: editingCandidate.story,
-                    reason: editingCandidate.reason,
-                    image_url: editingCandidate.image_url,
-                    is_published: editingCandidate.is_published,
-                  })}
-                  className="flex-1 py-3 bg-[#00ff00] text-black font-black uppercase tracking-widest"
+                  onClick={() => updateCandidate(editingCandidate)}
+                  className="flex-1 py-3 bg-[#00ff00] text-black font-bold uppercase"
                 >
                   Save
                 </button>
                 <button
-                  onClick={() => { setEditingCandidate(null); setShowAdminEdit(false); }}
-                  className="flex-1 py-3 border border-[#333] font-bold uppercase tracking-widest"
+                  onClick={() => { setShowAdminEdit(false); setEditingCandidate(null); }}
+                  className="flex-1 py-3 border border-[#333] text-white uppercase"
                 >
                   Cancel
                 </button>
