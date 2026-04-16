@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { supabase } from "./lib/supabase";
+import type { DbTopic, UserPoints } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -50,6 +51,7 @@ import ChessGame from "./components/games/Chess";
 import Tetris from "./components/games/Tetris";
 import Pong from "./components/games/Pong";
 import Sonoban from "./components/games/Sonoban";
+
 
 type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse' | 'swap';
 type GameType = 'reversi' | 'chess' | 'tetris' | 'pong' | 'sonoban';
@@ -180,27 +182,35 @@ export default function App() {
     }
   };
 
-  const fetchPoints = async (address: string) => {
-    try {
-      const res = await fetch(`/api/points/${address}`);
-      if (!res.ok) {
-        const errorData = await res.json();
-        if (errorData.error?.includes("Could not find the table")) {
-          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
-        }
-        throw new Error(errorData.error);
-      }
-      const data = await res.json();
-      setYmpPoints(data.points);
-      setMuseData(data);
-      
-      // Also fetch WYDA balance
-      const balance = await getWYDABalance(address);
-      setWydaBalance(balance);
-    } catch (err) {
-      console.error("Failed to fetch points", err);
+const fetchPoints = async (address: string) => {
+  try {
+    const { data, error } = await supabase
+      .from("user_points")
+      .select("*")
+      .eq("address", address)
+      .maybeSingle();
+
+    if (error) {
+      setError(error.message);
+      return;
     }
-  };
+
+    if (!data) {
+      setError("No user data found");
+      return;
+    }
+
+    setYmpPoints(data.points ?? 0);
+    setMuseData(data);
+
+    const balance = await getWYDABalance(address);
+    setWydaBalance(balance);
+
+  } catch (err) {
+    console.error(err);
+    setError("fetchPoints failed");
+  }
+};
 
   useEffect(() => {
     if (viewMode === 'awards') fetchCandidates(year);
@@ -270,6 +280,30 @@ export default function App() {
       setError(err.message);
     }
   };
+  const updateCandidate = async (candidate: Candidate) => {
+  try {
+    const { error } = await supabase
+      .from("candidates")
+      .update({
+        name: candidate.name,
+        story: candidate.story,
+        reason: candidate.reason,
+        image_url: candidate.image_url,
+        is_published: candidate.is_published
+      })
+      .eq("id", candidate.id);
+
+    if (error) throw error;
+
+    setSuccess("Candidate updated!");
+
+    // 🔥 핵심: 다시 불러오기
+    fetchCandidates(year);
+
+  } catch (err: any) {
+    setError(err.message);
+  }
+};
 
   const handleMarketVote = async (topicId: string, optionIndex: number) => {
     if (!walletAddress) return setError("Connect wallet to vote");
