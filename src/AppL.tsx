@@ -1177,6 +1177,7 @@ const fetchPoints = async (address: string) => {
                   Swap USDT to WYDA
                 </button>
               </div>
+              
 
               <div className="space-y-4 pt-6 border-t border-[#333]">
                 <div className="flex justify-between items-center">
@@ -1208,6 +1209,32 @@ const fetchPoints = async (address: string) => {
                   Custom LP: {swapAmount} USDT
                 </button>
               </div>
+              <div className="flex gap-3">
+  <a
+    href="https://apeswap.finance/swap?inputCurrency=0x55d398326f99059fF775485246999027B3197955&outputCurrency=0xD84B7E8b295d9Fa9656527AC33Bf4F683aE7d2C4"
+    target="_blank"
+    rel="noopener noreferrer"
+    className="flex-1 py-3 text-center border border-yellow-500 text-yellow-400 text-[10px] font-bold uppercase tracking-widest hover:bg-yellow-500/10 transition-all"
+  >
+    Open in ApeSwap (Swap)
+  </a>
+
+  <button
+    onClick={() => handleSwap("1")}
+    disabled={isProcessing}
+    className="flex-1 py-3 bg-[#00ff00] text-black font-bold uppercase"
+  >
+    {isProcessing ? "Processing..." : "Quick Swap"}
+  </button>
+</div>
+              <a
+  href="https://apeswap.finance/add-liquidity/0x55d398326f99059fF775485246999027B3197955/0xD84B7E8b295d9Fa9656527AC33Bf4F683aE7d2C4"
+  target="_blank"
+  rel="noopener noreferrer"
+  className="block w-full py-3 text-center border border-yellow-500 text-yellow-400 text-[10px] font-bold uppercase tracking-widest hover:bg-yellow-500/10 transition-all"
+>
+  Open in ApeSwap (Add LP)
+</a>
 
               <div className="p-4 bg-black/50 border border-[#333] rounded-sm">
                 <p className="text-[9px] text-[#555] leading-relaxed uppercase">
@@ -1344,6 +1371,7 @@ const fetchPoints = async (address: string) => {
                     </button>
                   </div>
                 </div>
+             
 
                 <div className="space-y-6">
                   <div className="flex items-center gap-4">
