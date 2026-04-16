@@ -52,6 +52,7 @@ import Tetris from "./components/games/Tetris";
 import Pong from "./components/games/Pong";
 import Sonoban from "./components/games/Sonoban";
 
+
 type ViewMode = 'awards' | 'arcade' | 'markets' | 'muse' | 'swap';
 type GameType = 'reversi' | 'chess' | 'tetris' | 'pong' | 'sonoban';
 type MuseSubTab = 'main' | 'quests' | 'archive' | 'defi';
@@ -279,6 +280,30 @@ const fetchPoints = async (address: string) => {
       setError(err.message);
     }
   };
+  const updateCandidate = async (candidate: Candidate) => {
+  try {
+    const { error } = await supabase
+      .from("candidates")
+      .update({
+        name: candidate.name,
+        story: candidate.story,
+        reason: candidate.reason,
+        image_url: candidate.image_url,
+        is_published: candidate.is_published
+      })
+      .eq("id", candidate.id);
+
+    if (error) throw error;
+
+    setSuccess("Candidate updated!");
+
+    // 🔥 핵심: 다시 불러오기
+    fetchCandidates(year);
+
+  } catch (err: any) {
+    setError(err.message);
+  }
+};
 
   const handleMarketVote = async (topicId: string, optionIndex: number) => {
     if (!walletAddress) return setError("Connect wallet to vote");
