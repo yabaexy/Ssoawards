@@ -183,33 +183,31 @@ export default function App() {
 
 const fetchPoints = async (address: string) => {
   try {
-    // ✅ Supabase 직접 조회
     const { data, error } = await supabase
       .from("user_points")
       .select("*")
       .eq("address", address)
-      .single();
+      .maybeSingle();
 
     if (error) {
-      if (error.message.includes("Could not find the table")) {
-        setError("Database tables are missing. Please run supabase_schema.sql");
-      } else {
-        setError(error.message);
-      }
+      setError(error.message);
       return;
     }
 
-    // ✅ 정상 데이터 처리
-    setYmpPoints(data.points);
+    if (!data) {
+      setError("No user data found");
+      return;
+    }
+
+    setYmpPoints(data.points ?? 0);
     setMuseData(data);
 
-    // ✅ WYDA 잔액
     const balance = await getWYDABalance(address);
     setWydaBalance(balance);
 
   } catch (err) {
-    console.error("Failed to fetch points", err);
-    setError("Failed to fetch points");
+    console.error(err);
+    setError("fetchPoints failed");
   }
 };
 
