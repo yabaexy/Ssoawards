@@ -65,6 +65,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('awards');
   const [activeGame, setActiveGame] = useState<GameType>('sonoban');
   const [gamesPlayed, setGamesPlayed] = useState<Set<string>>(new Set());
+  const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
 
   useEffect(() => {
     if (viewMode === 'arcade') {
@@ -78,6 +79,16 @@ export default function App() {
       });
     }
   }, [activeGame, viewMode]);
+  useEffect(() => {
+  const loadArchive = async () => {
+    if (museSubTab === "archive") {
+      const data = await fetchArchivedCandidates(year);
+      setArchivedCandidates(data);
+    }
+  };
+
+  loadArchive();
+}, [museSubTab, year]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,6 +162,92 @@ export default function App() {
   } catch (err: any) {
     console.error("Fetch error:", err);
     setError(`Failed to fetch candidates: ${err.message}`);
+  } finally {
+    setLoading(false);
+  }
+};
+// ===== Year Auto Management =====
+
+const makeDraftCandidate = (targetYear: number, index: number) => ({
+  name: `Draft ${index + 1}`,
+  story: "",
+  reason: "",
+  year: targetYear,
+  image_url: `https://picsum.photos/seed/${targetYear}-${index}/800/600`,
+  video_url: "",
+  is_published: false,
+  archived: false,
+});
+
+const archiveCandidatesForYear = async (targetYear: number) => {
+  const { error } = await supabase
+    .from("candidates")
+    .update({ archived: true, is_published: false })
+    .eq("year", targetYear);
+
+  if (error) throw error;
+};
+
+const seedFiveCandidatesForYear = async (targetYear: number) => {
+  const drafts = Array.from({ length: 5 }, (_, i) =>
+    makeDraftCandidate(targetYear, i)
+  );
+
+  const { error } = await supabase
+    .from("candidates")
+    .insert(drafts);
+
+  if (error) throw error;
+};
+
+const fetchArchivedCandidates = async (targetYear: number) => {
+  const { data, error } = await supabase
+    .from("candidates")
+    .select("*")
+    .eq("year", targetYear)
+    .eq("archived", true)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error(error);
+    return [];
+  }
+
+  return data ?? [];
+};
+
+const ensureYearState = async (targetYear: number) => {
+  setLoading(true);
+  setError(null);
+
+  try {
+    const currentYear = new Date().getFullYear();
+
+    // ✅ 과거 연도면 archive
+    if (targetYear < currentYear) {
+      await archiveCandidatesForYear(targetYear);
+    }
+
+    // ✅ 현재 연도 데이터 확인
+    const { data, error } = await supabase
+      .from("candidates")
+      .select("*")
+      .eq("year", targetYear)
+      .eq("archived", false);
+
+    if (error) throw error;
+
+    // ✅ 없으면 자동 생성
+    if (!data || data.length === 0) {
+      await seedFiveCandidatesForYear(targetYear);
+    }
+
+    // ✅ 메인 + Admin 동일 데이터
+    await fetchCandidates(targetYear);
+
+  } catch (err: any) {
+    console.error("ensureYearState error:", err);
+    setError(err.message);
   } finally {
     setLoading(false);
   }
@@ -230,11 +327,15 @@ const fetchPoints = async (address: string) => {
   }
 };
 
-  useEffect(() => {
+useEffect(() => {
+  if (viewMode === "awards") {
+    ensureYearState(year);
+  }
 
-    if (viewMode === 'awards') fetchCandidates(year);
-    if (viewMode === 'markets') fetchTopics();
-  }, [year, viewMode, walletAddress]);
+  if (viewMode === "markets") {
+    fetchTopics();
+  }
+}, [year, viewMode, walletAddress]);
 
   useEffect(() => {
     if (walletAddress) fetchPoints(walletAddress);
