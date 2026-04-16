@@ -61,14 +61,6 @@ const ADMIN_ADDRESSES = [
   '0x2E9Bff8Bf288ec3AB1Dc540B777f9b48276a6286'
 ].map(a => a.toLowerCase());
 
-const maskAddress = (address?: string | null) => {
-  if (!address) return "";
-  const value = address.trim();
-  if (value.length <= 12) return value;
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
-};
-
-
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('awards');
   const [activeGame, setActiveGame] = useState<GameType>('sonoban');
@@ -233,6 +225,25 @@ const fetchPoints = async (address: string) => {
   useEffect(() => {
     if (walletAddress) fetchPoints(walletAddress);
   }, [walletAddress]);
+
+  const goToMission = (missionId: string) => {
+    if (missionId === 'play_games') {
+      setViewMode('arcade');
+      setMuseSubTab('quests');
+      return;
+    }
+    if (missionId === 'lp_provide') {
+      setViewMode('swap');
+      setMuseSubTab('quests');
+      return;
+    }
+    if (missionId === 'market_vote') {
+      setViewMode('markets');
+      setMuseSubTab('quests');
+      return;
+    }
+  };
+
 
   const handleConnect = async () => {
     try {
@@ -583,8 +594,8 @@ const fetchPoints = async (address: string) => {
             )}
           >
             <Wallet size={14} />
-            <span className="hidden sm:inline">{walletAddress ? maskAddress(walletAddress) : "CONNECT"}</span>
-            <span className="sm:hidden">{walletAddress ? `${maskAddress(walletAddress).slice(0, 8)}...` : "CONNECT"}</span>
+            <span className="hidden sm:inline">{walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : "CONNECT"}</span>
+            <span className="sm:hidden">{walletAddress ? `${walletAddress.slice(0, 4)}...` : "CONNECT"}</span>
           </button>
 
           <button 
@@ -1058,7 +1069,7 @@ const fetchPoints = async (address: string) => {
                       <p className="text-xs text-[#888]">{topic.description}</p>
                     </div>
                     <div className="text-[9px] text-[#444] uppercase text-right">
-                      Creator: {maskAddress(topic.creator_address)}
+                      Creator: {topic.creator_address.slice(0, 6)}...{topic.creator_address.slice(-4)}
                     </div>
                   </div>
 
@@ -1296,7 +1307,7 @@ const fetchPoints = async (address: string) => {
                           </div>
                         ) : (
                           <button 
-                            onClick={() => setViewMode(mission.id === 'play_games' ? 'arcade' : 'markets')}
+                            onClick={() => goToMission(mission.id)}
                             className="text-[9px] text-white underline uppercase hover:text-[#00ff00]"
                           >
                             Go to Mission
@@ -1393,10 +1404,11 @@ const fetchPoints = async (address: string) => {
                           <p className="text-[10px] text-[#00ff00] font-bold">Reward: {q.reward} YMP</p>
                         </div>
                         <button 
+                          onClick={() => goToMission(q.id)}
                           disabled={museData?.completed_missions.includes(q.id)}
                           className="w-full py-2 border border-[#333] text-[9px] uppercase font-bold hover:border-[#00ff00] disabled:opacity-30"
                         >
-                          {museData?.completed_missions.includes(q.id) ? 'Claimed' : 'Start Quest'}
+                          {museData?.completed_missions.includes(q.id) ? 'Claimed' : q.id === 'play_games' ? 'Go to Arcade' : q.id === 'lp_provide' ? 'Go to Swap' : 'Go to Markets'}
                         </button>
                       </div>
                     ))}
