@@ -2,6 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
+import { supabase } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -104,28 +105,33 @@ export default function App() {
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
 
   const fetchCandidates = async (targetYear: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const isAdminCheck = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
-      const response = await fetch(`/api/candidates/${targetYear}?isAdmin=${isAdminCheck}`);
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        let msg = errorData.message || errorData.error || "Failed to fetch candidates from database";
-        if (msg.includes("Could not find the table") || msg.includes("relation") && msg.includes("does not exist")) {
-          msg = "Database tables are missing. Please run the SQL script in 'supabase_schema.sql' in your Supabase SQL Editor.";
-        }
-        throw new Error(msg);
-      }
-      let data = await response.json();
-      setCandidates(data);
-    } catch (err: any) {
-      console.error("Fetch error:", err);
-      setError(`Failed to fetch candidates: ${err.message}`);
-    } finally {
-      setLoading(false);
+  setLoading(true);
+  setError(null);
+
+  try {
+    let query = supabase
+      .from("candidates")
+      .select("*")
+      .eq("year", targetYear)
+      .eq("archived", false);
+
+    if (!isAdmin) {
+      query = query.eq("is_published", true);
     }
-  };
+
+    const { data, error } = await query;
+    
+
+    if (error) throw error;
+
+    setCandidates(data ?? []);
+  } catch (err: any) {
+    console.error("Fetch error:", err);
+    setError(`Failed to fetch candidates: ${err.message}`);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleInitializeYear = async () => {
     if (!isAdmin || !walletAddress) return;
@@ -1207,11 +1213,8 @@ export default function App() {
                       <ArrowRightLeft className="text-[#555]" />
                       <div className="space-y-1 text-right">
                         <p className="text-[10px] text-[#888] uppercase">To</p>
-<<<<<<< HEAD
                         <p className="text-xl font-bold">763 WYDA</p>
-=======
-                        <p className="text-xl font-bold">763 WYDA</p>
->>>>>>> d0d189a2867b9670e8cb905513e0918db2364e22
+
                       </div>
                     </div>
                     <button 
