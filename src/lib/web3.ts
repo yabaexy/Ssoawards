@@ -65,39 +65,72 @@ export async function swapUSDTtoWYDA(usdtAmount: string) {
 
 export async function addWYDALiquidity(usdtAmount: string) {
   if (!window.ethereum) throw new Error("MetaMask is not installed");
+
   const provider = new ethers.BrowserProvider(window.ethereum);
   const signer = await provider.getSigner();
   const address = await signer.getAddress();
+
+  // ✅ 1. 체인 체크 (BSC: 56)
+  const network = await provider.getNetwork();
+  if (network.chainId !== 56n) {
+    throw new Error("Please switch to BSC Mainnet");
+  }
 
   const usdtContract = new ethers.Contract(USDT_CONTRACT_ADDRESS, ERC20_ABI, signer);
   const wydaContract = new ethers.Contract(WYDA_CONTRACT_ADDRESS, ERC20_ABI, signer);
   const routerContract = new ethers.Contract(APESWAP_ROUTER_ADDRESS, ROUTER_ABI, signer);
 
-  const amountUsdtDesired = ethers.parseUnits(usdtAmount, 18);
-  
-  // Calculate required WYDA (simplified: 1:1 for this example, in real app use getAmountsOut)
+  const amountUsdtTotal = ethers.parseUnits(usdtAmount, 18);
+
+  // ✅ 2. USDT 절반은 WYDA로 스왑
+  const half = amountUsdtTotal / 2n;
+
   const path = [USDT_CONTRACT_ADDRESS, WYDA_CONTRACT_ADDRESS];
-  const amounts = await routerContract.getAmountsOut(amountUsdtDesired, path);
-  const amountWydaDesired = amounts[1];
-
-  // Approve both tokens
-  const approveUsdt = await usdtContract.approve(APESWAP_ROUTER_ADDRESS, amountUsdtDesired);
-  await approveUsdt.wait();
-  const approveWyda = await wydaContract.approve(APESWAP_ROUTER_ADDRESS, amountWydaDesired);
-  await approveWyda.wait();
-
   const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
 
-  const tx = await routerContract.addLiquidity(
-    USDT_CONTRACT_ADDRESS,
-    WYDA_CONTRACT_ADDRESS,
-    amountUsdtDesired,
-    amountWydaDesired,
-    (amountUsdtDesired * 95n) / 100n,
-    (amountWydaDesired * 95n) / 100n,
+  // ✅ 3. USDT approve (한 번만 충분히 크게)
+  const approveTx = await usdtContract.approve(APESWAP_ROUTER_ADDRESS, amountUsdtTotal);
+  await approveTx.wait();
+
+  // ✅ 4. 절반 USDT → WYDA 스왑
+  const amountsOut = await routerContract.getAmountsOut(half, path);
+  const minOut = (amountsOut[1] * 95n) / 100n;
+
+  const swapTx = await routerContract.swapExactTokensForTokens(
+    half,
+    minOut,
+    path,
     address,
     deadline
   );
+  await swapTx.wait();
+
+  // ✅ 5. 실제 받은 WYDA 확인
+  const wydaBalance = await wydaContract.balanceOf(address);
+
+  if (wydaBalance === 0n) {
+    throw new Error("Swap failed: No WYDA received");
+  }
+
+  // ✅ 6. WYDA approve
+  const approveWyda = await wydaContract.approve(APESWAP_ROUTER_ADDRESS, wydaBalance);
+  await approveWyda.wait();
+
+  // ✅ 7. 남은 USDT
+  const remainingUsdt = amountUsdtTotal - half;
+
+  // ✅ 8. LP 추가
+  const tx = await routerContract.addLiquidity(
+    USDT_CONTRACT_ADDRESS,
+    WYDA_CONTRACT_ADDRESS,
+    remainingUsdt,
+    wydaBalance,
+    (remainingUsdt * 95n) / 100n,
+    (wydaBalance * 95n) / 100n,
+    address,
+    deadline
+  );
+
   return tx.wait();
 }
 
