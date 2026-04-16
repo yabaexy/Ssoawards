@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { supabase } from "./lib/supabase";
+import type { DbTopic, UserPoints } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -180,27 +181,37 @@ export default function App() {
     }
   };
 
-  const fetchPoints = async (address: string) => {
-    try {
-      const res = await fetch(`/api/points/${address}`);
-      if (!res.ok) {
-        const errorData = await res.json();
-        if (errorData.error?.includes("Could not find the table")) {
-          setError("Database tables are missing. Please run the SQL script in 'supabase_schema.sql'.");
-        }
-        throw new Error(errorData.error);
+const fetchPoints = async (address: string) => {
+  try {
+    // ✅ Supabase 직접 조회
+    const { data, error } = await supabase
+      .from("user_points")
+      .select("*")
+      .eq("address", address)
+      .single();
+
+    if (error) {
+      if (error.message.includes("Could not find the table")) {
+        setError("Database tables are missing. Please run supabase_schema.sql");
+      } else {
+        setError(error.message);
       }
-      const data = await res.json();
-      setYmpPoints(data.points);
-      setMuseData(data);
-      
-      // Also fetch WYDA balance
-      const balance = await getWYDABalance(address);
-      setWydaBalance(balance);
-    } catch (err) {
-      console.error("Failed to fetch points", err);
+      return;
     }
-  };
+
+    // ✅ 정상 데이터 처리
+    setYmpPoints(data.points);
+    setMuseData(data);
+
+    // ✅ WYDA 잔액
+    const balance = await getWYDABalance(address);
+    setWydaBalance(balance);
+
+  } catch (err) {
+    console.error("Failed to fetch points", err);
+    setError("Failed to fetch points");
+  }
+};
 
   useEffect(() => {
     if (viewMode === 'awards') fetchCandidates(year);
