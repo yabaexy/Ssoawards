@@ -61,13 +61,6 @@ const ADMIN_ADDRESSES = [
   '0x2E9Bff8Bf288ec3AB1Dc540B777f9b48276a6286'
 ].map(a => a.toLowerCase());
 
-const maskAddress = (value: string | null | undefined, visibleStart = 6, visibleEnd = 4) => {
-  if (!value) return "";
-  if (value.length <= visibleStart + visibleEnd) return value;
-  const middle = "*".repeat(Math.max(6, value.length - visibleStart - visibleEnd));
-  return `${value.slice(0, visibleStart)}${middle}${value.slice(-visibleEnd)}`;
-};
-
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('awards');
   const [activeGame, setActiveGame] = useState<GameType>('sonoban');
@@ -601,8 +594,8 @@ const fetchPoints = async (address: string) => {
             )}
           >
             <Wallet size={14} />
-            <span className="hidden sm:inline">{walletAddress ? `${maskAddress(walletAddress)}` : "CONNECT"}</span>
-            <span className="sm:hidden">{walletAddress ? `${maskAddress(walletAddress, 4, 4)}` : "CONNECT"}</span>
+            <span className="hidden sm:inline">{walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : "CONNECT"}</span>
+            <span className="sm:hidden">{walletAddress ? `${walletAddress.slice(0, 4)}...` : "CONNECT"}</span>
           </button>
 
           <button 
@@ -1076,7 +1069,7 @@ const fetchPoints = async (address: string) => {
                       <p className="text-xs text-[#888]">{topic.description}</p>
                     </div>
                     <div className="text-[9px] text-[#444] uppercase text-right">
-                      Creator: {maskAddress(topic.creator_address)}
+                      Creator: {topic.creator_address.slice(0, 6)}...{topic.creator_address.slice(-4)}
                     </div>
                   </div>
 
@@ -1647,7 +1640,7 @@ const fetchPoints = async (address: string) => {
                 rel="noreferrer"
                 className="text-[#00ff00] hover:underline flex items-center gap-1"
               >
-                {maskAddress(WYDA_CONTRACT_ADDRESS, 10, 4)} <ExternalLink size={10} />
+                {WYDA_CONTRACT_ADDRESS.slice(0, 10)}... <ExternalLink size={10} />
               </a>
             </div>
           </div>
