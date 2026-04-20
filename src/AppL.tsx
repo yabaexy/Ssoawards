@@ -92,8 +92,6 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAdminEdit, setShowAdminEdit] = useState(false);
 
-  const [candidateVoteStats, setCandidateVoteStats] = useState<Record<string, { wyda: number; ymp: number; total: number }>>({});
-
   const isAdmin = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
 
   // Markets State
@@ -107,6 +105,9 @@ export default function App() {
   const [museData, setMuseData] = useState<UserPoints | null>(null);
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
   const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
+  const [candidateVoteStats, setCandidateVoteStats] = useState<
+    Record<string, { wyda: number; ymp: number; total: number }>
+  >({});
 
   const fetchCandidates = async (targetYear: number, silent = false) => {
   if (!silent) {
@@ -224,6 +225,27 @@ const fetchTopics = async () => {
   }
 };
 
+const fetchCandidateVoteStats = async () => {
+  const { data, error } = await supabase
+    .from("candidate_votes")
+    .select("candidate_id, payment_type, amount");
+
+  if (error) throw error;
+
+  const next: Record<string, { wyda: number; ymp: number; total: number }> = {};
+
+  for (const row of data ?? []) {
+    const key = String(row.candidate_id);
+    if (!next[key]) next[key] = { wyda: 0, ymp: 0, total: 0 };
+
+    next[key].total += 1;
+    if (row.payment_type === "WYDA") next[key].wyda += Number(row.amount || 10);
+    if (row.payment_type === "YMP") next[key].ymp += Number(row.amount || 10000);
+  }
+
+  setCandidateVoteStats(next);
+};
+
 const defaultUserPoints = (wallet: string): UserPoints => ({
   wallet_address: wallet,
   points: 0,
@@ -287,35 +309,10 @@ const fetchPoints = async (address: string) => {
     setError("fetchPoints failed");
   }
 };
-
-const fetchCandidateVoteStats = async () => {
-  try {
-    const { data, error } = await supabase
-      .from("candidate_votes")
-      .select("candidate_id, payment_type, amount");
-
-    if (error) throw error;
-
-    const next: Record<string, { wyda: number; ymp: number; total: number }> = {};
-
-    for (const row of data ?? []) {
-      const key = String(row.candidate_id);
-      if (!next[key]) next[key] = { wyda: 0, ymp: 0, total: 0 };
-
-      next[key].total += 1;
-      if (row.payment_type === "WYDA") next[key].wyda += Number(row.amount || 10);
-      if (row.payment_type === "YMP") next[key].ymp += Number(row.amount || 10000);
-    }
-
-    setCandidateVoteStats(next);
-  } catch (err) {
-    console.error("Failed to fetch candidate vote stats", err);
-  }
-};
   useEffect(() => {
     if (viewMode === "awards") {
       ensureYearState(year);
-      fetchCandidateVoteStats();
+      fetchCandidateVoteStats().catch(console.error);
     }
     if (viewMode === "markets") fetchTopics();
   }, [year, viewMode, walletAddress]);
@@ -558,7 +555,7 @@ const fetchCandidateVoteStats = async () => {
     }
   };
 
-  const handleVote = async (candidate: Candidate, candidateIndex: number) => {
+  const handleVote = async (candidate: Candidate) => {
     if (!walletAddress) {
       setError("Please connect your wallet first.");
       return;
@@ -567,7 +564,7 @@ const fetchCandidateVoteStats = async () => {
     setError(null);
     setSuccess(null);
     try {
-      await voteForCandidate(candidateIndex);
+      await voteForCandidate(parseInt(candidate.id) - 1);
 
       const { error } = await supabase.from("candidate_votes").insert([
         {
@@ -581,7 +578,7 @@ const fetchCandidateVoteStats = async () => {
       if (error) throw error;
 
       await fetchCandidateVoteStats();
-      setSuccess(`Successfully voted for ${candidate.name}! 10 WYDA sent.`);
+      setSuccess(`Successfully voted for ${candidate.name}! 10 Wyda sent.`);
     } catch (err: any) {
       console.error(err);
       setError(err.reason || err.message || "Transaction failed. Make sure you have Wyda tokens and BNB for gas on BSC.");
@@ -609,7 +606,7 @@ const fetchCandidateVoteStats = async () => {
         throw new Error("Not enough YMP points");
       }
 
-      const updated = await upsertUserPoints(wallet, {
+      await upsertUserPoints(wallet, {
         points: (current.points ?? 0) - cost,
       });
 
@@ -624,8 +621,7 @@ const fetchCandidateVoteStats = async () => {
 
       if (error) throw error;
 
-      setYmpPoints(updated.points ?? 0);
-      setMuseData(updated);
+      await fetchPoints(walletAddress);
       await fetchCandidateVoteStats();
       setSuccess(`Successfully voted for ${candidate.name}! 10000 YMP spent.`);
     } catch (err: any) {
@@ -1036,37 +1032,46 @@ const fetchCandidateVoteStats = async () => {
                             <p className="text-[10px] text-[#888] uppercase tracking-widest">or</p>
                             <p className="text-lg font-bold text-[#00ff00]">10000 YMP</p>
                           </div>
-                          <button 
-                            onClick={() => handleVote(candidate, idx)}
-                            disabled={votingId !== null || !candidate.is_published}
-                            className={cn(
-                              "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all",
-                              votingId === candidate.id || !candidate.is_published
-                                ? "bg-[#333] text-[#888] cursor-not-allowed"
-                                : "bg-[#00ff00] text-black hover:bg-black hover:text-[#00ff00] border border-[#00ff00]"
-                            )}
-                          >
-                            {votingId === candidate.id ? (
-                              <span className="flex items-center justify-center gap-2">
-                                <RefreshCw size={12} className="animate-spin" />
-                                Processing...
-                              </span>
-                            ) : (
-                              "Vote 10 WYDA"
-                            )}
-                          </button>
-                          <button 
-                            onClick={() => handleVoteWithYmp(candidate)}
-                            disabled={votingId !== null || !candidate.is_published}
-                            className={cn(
-                              "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all border",
-                              votingId === candidate.id || !candidate.is_published
-                                ? "bg-[#333] text-[#888] border-[#333] cursor-not-allowed"
-                                : "bg-transparent text-[#00ff00] border-[#00ff00] hover:bg-[#00ff00] hover:text-black"
-                            )}
-                          >
-                            Vote 10000 YMP
-                          </button>
+                          <div className="grid gap-2">
+                            <button 
+                              onClick={() => handleVote(candidate)}
+                              disabled={votingId !== null || !candidate.is_published}
+                              className={cn(
+                                "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all",
+                                votingId === candidate.id || !candidate.is_published
+                                  ? "bg-[#333] text-[#888] cursor-not-allowed"
+                                  : "bg-[#00ff00] text-black hover:bg-black hover:text-[#00ff00] border border-[#00ff00]"
+                              )}
+                            >
+                              {votingId === candidate.id ? (
+                                <span className="flex items-center justify-center gap-2">
+                                  <RefreshCw size={12} className="animate-spin" />
+                                  Processing...
+                                </span>
+                              ) : (
+                                "Vote 10 WYDA"
+                              )}
+                            </button>
+                            <button 
+                              onClick={() => handleVoteWithYmp(candidate)}
+                              disabled={votingId !== null || !candidate.is_published}
+                              className={cn(
+                                "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all border",
+                                votingId === candidate.id || !candidate.is_published
+                                  ? "bg-[#333] text-[#888] border-[#333] cursor-not-allowed"
+                                  : "bg-transparent text-[#00ff00] border-[#00ff00] hover:bg-[#00ff00] hover:text-black"
+                              )}
+                            >
+                              {votingId === candidate.id ? (
+                                <span className="flex items-center justify-center gap-2">
+                                  <RefreshCw size={12} className="animate-spin" />
+                                  Processing...
+                                </span>
+                              ) : (
+                                "Vote 10000 YMP"
+                              )}
+                            </button>
+                          </div>
                           {isAdmin && candidateVoteStats[candidate.id] && (
                             <div className="text-[10px] text-[#888] pt-2 border-t border-[#333]">
                               WYDA: {candidateVoteStats[candidate.id].wyda} / YMP: {candidateVoteStats[candidate.id].ymp} / Total: {candidateVoteStats[candidate.id].total}
