@@ -134,7 +134,7 @@ export async function addWYDALiquidity(usdtAmount: string) {
   return tx.wait();
 }
 
-export async function voteForCandidate(candidateIndex: number, amount = "10") {
+export async function voteForCandidate(candidateIndex: number) {
   if (!window.ethereum) {
     throw new Error("MetaMask is not installed");
   }
@@ -149,10 +149,11 @@ export async function voteForCandidate(candidateIndex: number, amount = "10") {
     throw new Error("Invalid candidate index");
   }
 
+  // 10 Wyda
   const decimals = await wydaContract.decimals();
-  const value = ethers.parseUnits(amount, decimals);
+  const amount = ethers.parseUnits("10", decimals);
 
-  const tx = await wydaContract.transfer(targetAddress, value);
+  const tx = await wydaContract.transfer(targetAddress, amount);
   return tx.wait();
 }
 

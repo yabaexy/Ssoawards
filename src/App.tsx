@@ -105,6 +105,9 @@ export default function App() {
   const [museData, setMuseData] = useState<UserPoints | null>(null);
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
   const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
+  const [candidateVoteStats, setCandidateVoteStats] = useState<
+    Record<string, { wyda: number; ymp: number; total: number }>
+  >({});
 
   const fetchCandidates = async (targetYear: number, silent = false) => {
   if (!silent) {
@@ -222,6 +225,27 @@ const fetchTopics = async () => {
   }
 };
 
+const fetchCandidateVoteStats = async () => {
+  const { data, error } = await supabase
+    .from("candidate_votes")
+    .select("candidate_id, payment_type, amount");
+
+  if (error) throw error;
+
+  const next: Record<string, { wyda: number; ymp: number; total: number }> = {};
+
+  for (const row of data ?? []) {
+    const key = String(row.candidate_id);
+    if (!next[key]) next[key] = { wyda: 0, ymp: 0, total: 0 };
+
+    next[key].total += 1;
+    if (row.payment_type === "WYDA") next[key].wyda += Number(row.amount || 10);
+    if (row.payment_type === "YMP") next[key].ymp += Number(row.amount || 10000);
+  }
+
+  setCandidateVoteStats(next);
+};
+
 const defaultUserPoints = (wallet: string): UserPoints => ({
   wallet_address: wallet,
   points: 0,
@@ -288,6 +312,7 @@ const fetchPoints = async (address: string) => {
   useEffect(() => {
     if (viewMode === "awards") {
       ensureYearState(year);
+      fetchCandidateVoteStats().catch(console.error);
     }
     if (viewMode === "markets") fetchTopics();
   }, [year, viewMode, walletAddress]);
@@ -540,10 +565,67 @@ const fetchPoints = async (address: string) => {
     setSuccess(null);
     try {
       await voteForCandidate(parseInt(candidate.id) - 1);
+
+      const { error } = await supabase.from("candidate_votes").insert([
+        {
+          candidate_id: candidate.id,
+          voter_address: walletAddress.toLowerCase(),
+          payment_type: "WYDA",
+          amount: 10,
+        },
+      ]);
+
+      if (error) throw error;
+
+      await fetchCandidateVoteStats();
       setSuccess(`Successfully voted for ${candidate.name}! 10 Wyda sent.`);
     } catch (err: any) {
       console.error(err);
       setError(err.reason || err.message || "Transaction failed. Make sure you have Wyda tokens and BNB for gas on BSC.");
+    } finally {
+      setVotingId(null);
+    }
+  };
+
+  const handleVoteWithYmp = async (candidate: Candidate) => {
+    if (!walletAddress) {
+      setError("Please connect your wallet first.");
+      return;
+    }
+
+    setVotingId(candidate.id);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const wallet = walletAddress.toLowerCase();
+      const current = await getOrCreateUserPoints(wallet);
+      const cost = 10000;
+
+      if ((current.points ?? 0) < cost) {
+        throw new Error("Not enough YMP points");
+      }
+
+      await upsertUserPoints(wallet, {
+        points: (current.points ?? 0) - cost,
+      });
+
+      const { error } = await supabase.from("candidate_votes").insert([
+        {
+          candidate_id: candidate.id,
+          voter_address: wallet,
+          payment_type: "YMP",
+          amount: cost,
+        },
+      ]);
+
+      if (error) throw error;
+
+      await fetchPoints(walletAddress);
+      await fetchCandidateVoteStats();
+      setSuccess(`Successfully voted for ${candidate.name}! 10000 YMP spent.`);
+    } catch (err: any) {
+      setError(err.message || "YMP vote failed.");
     } finally {
       setVotingId(null);
     }
@@ -947,26 +1029,54 @@ const fetchPoints = async (address: string) => {
                           <div className="text-center space-y-1">
                             <p className="text-[10px] text-[#888] uppercase tracking-widest">Vote Cost</p>
                             <p className="text-lg font-bold">10 WYDA</p>
+                            <p className="text-[10px] text-[#888] uppercase tracking-widest">or</p>
+                            <p className="text-lg font-bold text-[#00ff00]">10000 YMP</p>
                           </div>
-                          <button 
-                            onClick={() => handleVote(candidate)}
-                            disabled={votingId !== null || !candidate.is_published}
-                            className={cn(
-                              "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all",
-                              votingId === candidate.id || !candidate.is_published
-                                ? "bg-[#333] text-[#888] cursor-not-allowed"
-                                : "bg-[#00ff00] text-black hover:bg-black hover:text-[#00ff00] border border-[#00ff00]"
-                            )}
-                          >
-                            {votingId === candidate.id ? (
-                              <span className="flex items-center justify-center gap-2">
-                                <RefreshCw size={12} className="animate-spin" />
-                                Processing...
-                              </span>
-                            ) : (
-                              "Cast Vote"
-                            )}
-                          </button>
+                          <div className="grid gap-2">
+                            <button 
+                              onClick={() => handleVote(candidate)}
+                              disabled={votingId !== null || !candidate.is_published}
+                              className={cn(
+                                "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all",
+                                votingId === candidate.id || !candidate.is_published
+                                  ? "bg-[#333] text-[#888] cursor-not-allowed"
+                                  : "bg-[#00ff00] text-black hover:bg-black hover:text-[#00ff00] border border-[#00ff00]"
+                              )}
+                            >
+                              {votingId === candidate.id ? (
+                                <span className="flex items-center justify-center gap-2">
+                                  <RefreshCw size={12} className="animate-spin" />
+                                  Processing...
+                                </span>
+                              ) : (
+                                "Vote 10 WYDA"
+                              )}
+                            </button>
+                            <button 
+                              onClick={() => handleVoteWithYmp(candidate)}
+                              disabled={votingId !== null || !candidate.is_published}
+                              className={cn(
+                                "w-full py-3 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all border",
+                                votingId === candidate.id || !candidate.is_published
+                                  ? "bg-[#333] text-[#888] border-[#333] cursor-not-allowed"
+                                  : "bg-transparent text-[#00ff00] border-[#00ff00] hover:bg-[#00ff00] hover:text-black"
+                              )}
+                            >
+                              {votingId === candidate.id ? (
+                                <span className="flex items-center justify-center gap-2">
+                                  <RefreshCw size={12} className="animate-spin" />
+                                  Processing...
+                                </span>
+                              ) : (
+                                "Vote 10000 YMP"
+                              )}
+                            </button>
+                          </div>
+                          {isAdmin && candidateVoteStats[candidate.id] && (
+                            <div className="text-[10px] text-[#888] pt-2 border-t border-[#333]">
+                              WYDA: {candidateVoteStats[candidate.id].wyda} / YMP: {candidateVoteStats[candidate.id].ymp} / Total: {candidateVoteStats[candidate.id].total}
+                            </div>
+                          )}
                         </>
                       )}
                     </div>

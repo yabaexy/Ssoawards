@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import { supabase } from "./lib/supabase";
-import type { DbTopic, UserPoints } from "./lib/supabase";
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -43,6 +42,8 @@ import {
 import { generateCandidates, type Candidate } from "./lib/gemini";
 import { connectWallet, voteForCandidate, WYDA_CONTRACT_ADDRESS, swapUSDTtoWYDA, addWYDALiquidity, getWYDABalance } from "./lib/web3";
 import { cn } from "./lib/utils";
+import type { DbTopic, UserPoints } from "./lib/supabase";
+
 // Game Components
 import Reversi from "./components/games/Reversi";
 import ChessGame from "./components/games/Chess";
@@ -90,16 +91,6 @@ export default function App() {
   const [wydaBalance, setWydaBalance] = useState("0");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAdminEdit, setShowAdminEdit] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newCandidate, setNewCandidate] = useState({
-    name: "",
-    story: "",
-    reason: "",
-    image_url: "",
-    year: new Date().getFullYear(),
-    is_published: false,
-    archived: false,
-  });
 
   const isAdmin = walletAddress ? ADMIN_ADDRESSES.includes(walletAddress.toLowerCase()) : false;
 
@@ -113,24 +104,13 @@ export default function App() {
   // Muse State
   const [museData, setMuseData] = useState<UserPoints | null>(null);
   const [museSubTab, setMuseSubTab] = useState<MuseSubTab>('main');
+  const [archivedCandidates, setArchivedCandidates] = useState<Candidate[]>([]);
 
-  const handleMissionNavigation = (missionId: string) => {
-    if (missionId === 'play_games') {
-      setViewMode('arcade');
-      return;
-    }
-    if (missionId === 'lp_provide') {
-      setViewMode('swap');
-      return;
-    }
-    if (missionId === 'market_vote') {
-      setViewMode('markets');
-    }
-  };
-
-  const fetchCandidates = async (targetYear: number) => {
-  setLoading(true);
-  setError(null);
+  const fetchCandidates = async (targetYear: number, silent = false) => {
+  if (!silent) {
+    setLoading(true);
+    setError(null);
+  }
 
   try {
     let query = supabase
@@ -152,73 +132,149 @@ export default function App() {
     console.error("Fetch error:", err);
     setError(`Failed to fetch candidates: ${err.message}`);
   } finally {
+    if (!silent) setLoading(false);
+  }
+};
+
+const seedFiveCandidatesForYear = async (targetYear: number) => {
+  const drafts = Array.from({ length: 5 }).map((_, i) => ({
+    name: `Draft ${i + 1}`,
+    story: "",
+    reason: "",
+    year: targetYear,
+    is_published: false,
+    archived: false,
+    image_url: `https://picsum.photos/seed/${targetYear}-${i}/800/600`,
+    video_url: "",
+  }));
+
+  const { error } = await supabase.from("candidates").insert(drafts as any);
+  if (error) throw error;
+};
+
+const archiveCandidatesBeforeYear = async (cutoffYear: number) => {
+  const { error } = await supabase
+    .from("candidates")
+    .update({ archived: true, is_published: false })
+    .lt("year", cutoffYear);
+
+  if (error) throw error;
+};
+
+const fetchArchivedCandidates = async (targetYear: number) => {
+  const { data, error } = await supabase
+    .from("candidates")
+    .select("*")
+    .eq("year", targetYear)
+    .eq("archived", true)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as Candidate[];
+};
+
+const ensureYearState = async (targetYear: number) => {
+  setLoading(true);
+  setError(null);
+
+  try {
+    const { data: existing, error } = await supabase
+      .from("candidates")
+      .select("id")
+      .eq("year", targetYear);
+
+    if (error) throw error;
+
+    if (!existing || existing.length === 0) {
+      await seedFiveCandidatesForYear(targetYear);
+    }
+
+    await archiveCandidatesBeforeYear(new Date().getFullYear());
+
+    await fetchCandidates(targetYear, true);
+    const archived = await fetchArchivedCandidates(targetYear);
+    setArchivedCandidates(archived);
+  } catch (err: any) {
+    console.error("ensureYearState error:", err);
+    setError(err.message || "Failed to initialize year state");
+  } finally {
     setLoading(false);
   }
 };
 
-  const handleInitializeYear = async () => {
-    if (!isAdmin || !walletAddress) return;
-    setLoading(true);
-    try {
-      const emptySlots = Array.from({ length: 5 }).map((_, i) => ({
-        name: "",
-        story: "",
-        reason: "",
-        year,
-        is_published: false,
-        archived: false,
-        image_url: `https://picsum.photos/seed/empty-${year}-${i}/800/600`,
-      }));
+const handleInitializeYear = async () => {
+  if (!isAdmin || !walletAddress) return;
+  await ensureYearState(year);
+  setSuccess(`Initialized 5 empty slots for ${year}`);
+};
 
-      const { error } = await supabase.from("candidates").insert(emptySlots);
-      if (error) throw error;
+const fetchTopics = async () => {
+  try {
+    const { data, error } = await supabase
+      .from("topics")
+      .select("*, votes(*)");
 
-      setSuccess(`Initialized 5 empty slots for ${year}`);
-      fetchCandidates(year);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    if (error) throw error;
+    setTopics((data as any) ?? []);
+  } catch (err) {
+    console.error("Failed to fetch topics", err);
+    setError("Failed to fetch topics from database");
+  }
+};
+
+const defaultUserPoints = (wallet: string): UserPoints => ({
+  wallet_address: wallet,
+  points: 0,
+  muse_level: 1,
+  unlocked_skins: ["default"],
+  current_skin: "default",
+  completed_missions: [],
+});
+
+const getOrCreateUserPoints = async (wallet: string) => {
+  const { data, error } = await supabase
+    .from("user_points")
+    .select("*")
+    .eq("wallet_address", wallet)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (data) return data as UserPoints;
+
+  const fallback = defaultUserPoints(wallet);
+  const { data: inserted, error: insertError } = await supabase
+    .from("user_points")
+    .upsert(fallback as any, { onConflict: "wallet_address" })
+    .select("*")
+    .single();
+
+  if (insertError) throw insertError;
+  return inserted as UserPoints;
+};
+
+const upsertUserPoints = async (wallet: string, patch: Partial<UserPoints>) => {
+  const current = await getOrCreateUserPoints(wallet);
+  const payload: UserPoints = {
+    ...current,
+    ...patch,
+    wallet_address: wallet,
   };
 
-  const fetchTopics = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("topics")
-        .select("*, votes(*)");
+  const { data, error } = await supabase
+    .from("user_points")
+    .upsert(payload as any, { onConflict: "wallet_address" })
+    .select("*")
+    .single();
 
-      if (error) throw error;
-      setTopics((data as any) ?? []);
-    } catch (err) {
-      console.error("Failed to fetch topics", err);
-    }
-  };
+  if (error) throw error;
+  return data as UserPoints;
+};
 
 const fetchPoints = async (address: string) => {
   try {
     const wallet = address.toLowerCase();
-    const { data, error } = await supabase
-      .from("user_points")
-      .select("*")
-      .eq("wallet_address", wallet)
-      .maybeSingle();
+    const next = await getOrCreateUserPoints(wallet);
 
-    if (error) {
-      setError(error.message);
-      return;
-    }
-
-    const defaultData = {
-      wallet_address: wallet,
-      points: 0,
-      muse_level: 1,
-      unlocked_skins: ["default"],
-      current_skin: "default",
-      completed_missions: [],
-    } as UserPoints;
-
-    const next = (data as UserPoints | null) ?? defaultData;
     setYmpPoints(next.points ?? 0);
     setMuseData(next);
 
@@ -229,12 +285,23 @@ const fetchPoints = async (address: string) => {
     setError("fetchPoints failed");
   }
 };
+  useEffect(() => {
+    if (viewMode === "awards") {
+      ensureYearState(year);
+    }
+    if (viewMode === "markets") fetchTopics();
+  }, [year, viewMode, walletAddress]);
 
   useEffect(() => {
-
-    if (viewMode === 'awards') fetchCandidates(year);
-    if (viewMode === 'markets') fetchTopics();
-  }, [year, viewMode, walletAddress]);
+    if (museSubTab === "archive") {
+      fetchArchivedCandidates(year)
+        .then(setArchivedCandidates)
+        .catch((err) => {
+          console.error("Failed to load archive", err);
+          setArchivedCandidates([]);
+        });
+    }
+  }, [museSubTab, year]);
 
   useEffect(() => {
     if (walletAddress) fetchPoints(walletAddress);
@@ -286,11 +353,12 @@ const fetchPoints = async (address: string) => {
         {
           title: newTopic.title,
           description: newTopic.description,
-          options: newTopic.options.filter(Boolean),
+          options: newTopic.options,
           creator_address: walletAddress,
           status: "open",
         },
       ]);
+
       if (error) throw error;
 
       setShowCreateTopic(false);
@@ -302,63 +370,39 @@ const fetchPoints = async (address: string) => {
       setError(err.message);
     }
   };
+  const updateCandidate = async (candidate: Candidate) => {
+  try {
+    const { error } = await supabase
+      .from("candidates")
+      .update({
+        name: candidate.name,
+        story: candidate.story,
+        reason: candidate.reason,
+        image_url: candidate.image_url,
+        is_published: candidate.is_published
+      })
+      .eq("id", candidate.id);
 
-  const createCandidate = async () => {
-    if (!walletAddress || !isAdmin) return;
-    try {
-      const { error } = await supabase.from("candidates").insert([
-        {
-          ...newCandidate,
-          year,
-          archived: false,
-        },
-      ]);
-      if (error) throw error;
-      setShowCreateModal(false);
-      setNewCandidate({
-        name: "",
-        story: "",
-        reason: "",
-        image_url: "",
-        year,
-        is_published: false,
-        archived: false,
-      });
-      fetchCandidates(year);
-      setSuccess("Candidate created successfully!");
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+    if (error) throw error;
 
-  const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
-    if (!walletAddress || !isAdmin) return;
-    try {
-      const { error } = await supabase
-        .from("candidates")
-        .update(updates)
-        .eq("id", id);
+    setSuccess("Candidate updated!");
 
-      if (error) throw error;
+    // 🔥 핵심: 다시 불러오기
+    fetchCandidates(year);
 
-      setSuccess("Candidate updated!");
-      setEditingCandidate(null);
-      setShowAdminEdit(false);
-      fetchCandidates(year);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  } catch (err: any) {
+    setError(err.message);
+  }
+};
 
   const handleMarketVote = async (topicId: string, optionIndex: number) => {
     if (!walletAddress) return setError("Connect wallet to vote");
     try {
-      const voter_address = walletAddress.toLowerCase();
       const { data: existing, error: existingError } = await supabase
         .from("votes")
         .select("id")
         .eq("topic_id", topicId)
-        .eq("voter_address", voter_address);
+        .eq("voter_address", walletAddress);
 
       if (existingError) throw existingError;
       if (existing && existing.length > 0) {
@@ -368,10 +412,11 @@ const fetchPoints = async (address: string) => {
       const { error } = await supabase.from("votes").insert([
         {
           topic_id: topicId,
-          voter_address,
+          voter_address: walletAddress,
           option_index: optionIndex,
         },
       ]);
+
       if (error) throw error;
 
       fetchTopics();
@@ -383,39 +428,45 @@ const fetchPoints = async (address: string) => {
   };
 
   const completeMission = async (missionId: string) => {
-    if (!walletAddress || !museData) return;
-    if (museData.completed_missions.includes(missionId)) return;
-
-    const rewards: Record<string, number> = {
-      'market_vote': 450,
-      'lp_provide': 1200,
-      'play_games': 700
-    };
-
-    const reward = rewards[missionId] || 0;
-    const newPoints = (ympPoints || 0) + reward;
-    const newMissions = [...museData.completed_missions, missionId];
+    if (!walletAddress) return;
+    const wallet = walletAddress.toLowerCase();
 
     try {
-      const { error } = await supabase
-        .from("user_points")
-        .upsert({
-          wallet_address: walletAddress.toLowerCase(),
-          points: newPoints,
-          muse_level: museData.muse_level ?? 1,
-          unlocked_skins: museData.unlocked_skins ?? ["default"],
-          current_skin: museData.current_skin ?? "default",
-          completed_missions: newMissions,
-        })
-        .select();
+      const current = await getOrCreateUserPoints(wallet);
+      if (current.completed_missions.includes(missionId)) return;
 
-      if (error) throw error;
+      const rewards: Record<string, number> = {
+        'market_vote': 450,
+        'lp_provide': 1200,
+        'play_games': 700,
+      };
 
-      setYmpPoints(newPoints);
-      setMuseData({ ...museData, points: newPoints, completed_missions: newMissions });
+      const reward = rewards[missionId] || 0;
+      const updated = await upsertUserPoints(wallet, {
+        points: (current.points ?? 0) + reward,
+        completed_missions: [...current.completed_missions, missionId],
+      });
+
+      setYmpPoints(updated.points ?? 0);
+      setMuseData(updated);
       setSuccess(`Mission Complete! +${reward} YMP`);
     } catch (err) {
       console.error("Failed to update mission", err);
+    }
+  };
+
+  const handleMissionNavigation = (missionId: string) => {
+    if (missionId === "play_games") {
+      setViewMode("arcade");
+      return;
+    }
+    if (missionId === "lp_provide") {
+      setViewMode("swap");
+      return;
+    }
+    if (missionId === "market_vote") {
+      setViewMode("markets");
+      return;
     }
   };
 
@@ -425,6 +476,7 @@ const fetchPoints = async (address: string) => {
         .from("topics")
         .update({ status: "resolved", winner_index: winnerIndex })
         .eq("id", topicId);
+
       if (topicError) throw topicError;
 
       const { data: winners, error: votesError } = await supabase
@@ -432,29 +484,15 @@ const fetchPoints = async (address: string) => {
         .select("voter_address")
         .eq("topic_id", topicId)
         .eq("option_index", winnerIndex);
+
       if (votesError) throw votesError;
 
-      if (winners?.length) {
-        for (const winner of winners) {
-          const address = winner.voter_address.toLowerCase();
-          const { data: current, error: currentError } = await supabase
-            .from("user_points")
-            .select("points, muse_level, unlocked_skins, current_skin, completed_missions")
-            .eq("wallet_address", address)
-            .maybeSingle();
-          if (currentError) throw currentError;
-
-          const currentPoints = current?.points ?? 0;
-          const newPoints = currentPoints + 3800;
-          await supabase.from("user_points").upsert({
-            wallet_address: address,
-            points: newPoints,
-            muse_level: current?.muse_level ?? 1,
-            unlocked_skins: current?.unlocked_skins ?? ["default"],
-            current_skin: current?.current_skin ?? "default",
-            completed_missions: current?.completed_missions ?? [],
-          });
-        }
+      for (const winner of winners ?? []) {
+        const wallet = winner.voter_address.toLowerCase();
+        const current = await getOrCreateUserPoints(wallet);
+        await upsertUserPoints(wallet, {
+          points: (current.points ?? 0) + 3800,
+        });
       }
 
       fetchTopics();
@@ -465,9 +503,34 @@ const fetchPoints = async (address: string) => {
     }
   };
 
+  const handleUpdateCandidate = async (id: string, updates: Partial<Candidate>) => {
+    if (!walletAddress) return;
+    try {
+      const { error } = await supabase
+        .from("candidates")
+        .update({
+          name: updates.name,
+          story: updates.story,
+          reason: updates.reason,
+          image_url: updates.image_url,
+          is_published: updates.is_published,
+          archived: updates.archived,
+        } as any)
+        .eq("id", id);
+
+      if (error) throw error;
+
+      setEditingCandidate(null);
+      fetchCandidates(year);
+      const archived = await fetchArchivedCandidates(year);
+      setArchivedCandidates(archived);
+      setSuccess("Candidate updated successfully!");
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   const handleVote = async (candidate: Candidate) => {
-
-
     if (!walletAddress) {
       setError("Please connect your wallet first.");
       return;
@@ -651,18 +714,6 @@ const fetchPoints = async (address: string) => {
                       Admin Edit
                     </button>
                   )}
-                  {isAdmin && (
-                    <button
-                      onClick={() => {
-                        setShowCreateModal(true);
-                        setIsMobileMenuOpen(false);
-                      }}
-                      className="flex items-center gap-4 px-4 py-4 text-sm font-bold uppercase tracking-widest transition-all border border-[#00ff00]/30 rounded-sm text-[#00ff00] hover:bg-[#00ff00]/10"
-                    >
-                      <Plus size={18} />
-                      Create Candidate
-                    </button>
-                  )}
                 </nav>
 
                 {walletAddress && (
@@ -775,7 +826,7 @@ const fetchPoints = async (address: string) => {
                 </div>
               ) : (
                 candidates
-                  .filter(c => showAdminEdit ? true : c.is_published || isAdmin)
+                  .filter(c => showAdminEdit ? !c.is_published : c.is_published || isAdmin)
                   .map((candidate, idx) => (
                     <motion.div 
                     key={candidate.id}
@@ -1177,7 +1228,6 @@ const fetchPoints = async (address: string) => {
                   Swap USDT to WYDA
                 </button>
               </div>
-              
 
               <div className="space-y-4 pt-6 border-t border-[#333]">
                 <div className="flex justify-between items-center">
@@ -1209,32 +1259,6 @@ const fetchPoints = async (address: string) => {
                   Custom LP: {swapAmount} USDT
                 </button>
               </div>
-              <div className="flex gap-3">
-  <a
-    href="https://apeswap.finance/swap?inputCurrency=0x55d398326f99059fF775485246999027B3197955&outputCurrency=0xD84B7E8b295d9Fa9656527AC33Bf4F683aE7d2C4"
-    target="_blank"
-    rel="noopener noreferrer"
-    className="flex-1 py-3 text-center border border-yellow-500 text-yellow-400 text-[10px] font-bold uppercase tracking-widest hover:bg-yellow-500/10 transition-all"
-  >
-    Open in ApeSwap (Swap)
-  </a>
-
-  <button
-    onClick={() => handleSwap("1")}
-    disabled={isProcessing}
-    className="flex-1 py-3 bg-[#00ff00] text-black font-bold uppercase"
-  >
-    {isProcessing ? "Processing..." : "Quick Swap"}
-  </button>
-</div>
-              <a
-  href="https://apeswap.finance/add-liquidity/0x55d398326f99059fF775485246999027B3197955/0xD84B7E8b295d9Fa9656527AC33Bf4F683aE7d2C4"
-  target="_blank"
-  rel="noopener noreferrer"
-  className="block w-full py-3 text-center border border-yellow-500 text-yellow-400 text-[10px] font-bold uppercase tracking-widest hover:bg-yellow-500/10 transition-all"
->
-  Open in ApeSwap (Add LP)
-</a>
 
               <div className="p-4 bg-black/50 border border-[#333] rounded-sm">
                 <p className="text-[9px] text-[#555] leading-relaxed uppercase">
@@ -1371,7 +1395,6 @@ const fetchPoints = async (address: string) => {
                     </button>
                   </div>
                 </div>
-             
 
                 <div className="space-y-6">
                   <div className="flex items-center gap-4">
@@ -1428,10 +1451,9 @@ const fetchPoints = async (address: string) => {
                         </div>
                         <button 
                           onClick={() => handleMissionNavigation(q.id)}
-                          disabled={museData?.completed_missions.includes(q.id)}
-                          className="w-full py-2 border border-[#333] text-[9px] uppercase font-bold hover:border-[#00ff00] disabled:opacity-30"
+                          className="w-full py-2 border border-[#333] text-[9px] uppercase font-bold hover:border-[#00ff00] transition-all"
                         >
-                          {museData?.completed_missions.includes(q.id) ? 'Claimed' : 'Start Quest'}
+                          {museData?.completed_missions.includes(q.id) ? 'Go to Mission' : 'Start Quest'}
                         </button>
                       </div>
                     ))}
@@ -1474,23 +1496,23 @@ const fetchPoints = async (address: string) => {
                     <h3 className="text-2xl font-black uppercase tracking-tighter">Darwin Archive</h3>
                   </div>
                   <div className="grid gap-6">
-                    {[
-                      { name: 'Seo Se-won', crime: 'Unauthorized Business', lesson: 'Avoid unauthorized business ventures at all costs.', reward: '3,000 YMP + Badge' },
-                      { name: 'Kim Ki-duk', crime: 'Exploitation', lesson: 'Never exploit others for your own gain.', reward: '4,000 YMP + Skin' },
-                      { name: 'Stockton Rush', crime: 'Safety Neglect', lesson: 'Safety is not a luxury, it is a requirement.', reward: '5,000 YMP + Frame' },
-                    ].map((item, i) => (
-                      <div key={i} className="group p-6 border border-[#333] bg-[#0a0a0a] hover:border-[#ff4444]/50 transition-all">
-                        <div className="flex justify-between items-start mb-4">
-                          <h4 className="text-lg font-bold uppercase text-[#ff4444]">{item.name}</h4>
-                          <span className="text-[9px] bg-[#ff4444]/10 text-[#ff4444] px-2 py-0.5 border border-[#ff4444]/30 uppercase font-bold">{item.crime}</span>
+                    {archivedCandidates.length === 0 ? (
+                      <p className="text-sm text-[#888]">No archived candidates for {year}.</p>
+                    ) : (
+                      archivedCandidates.map((item, i) => (
+                        <div key={item.id ?? i} className="group p-6 border border-[#333] bg-[#0a0a0a] hover:border-[#ff4444]/50 transition-all">
+                          <div className="flex justify-between items-start mb-4">
+                            <h4 className="text-lg font-bold uppercase text-[#ff4444]">{item.name || `Archived Slot ${i + 1}`}</h4>
+                            <span className="text-[9px] bg-[#ff4444]/10 text-[#ff4444] px-2 py-0.5 border border-[#ff4444]/30 uppercase font-bold">Archived</span>
+                          </div>
+                          <p className="text-xs text-[#888] mb-4 italic">{item.story || "This candidate is archived."}</p>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] text-[#555] uppercase">Reason:</span>
+                            <span className="text-[10px] text-[#00ff00] font-bold uppercase">{item.reason || "Awaiting input"}</span>
+                          </div>
                         </div>
-                        <p className="text-xs text-[#888] mb-4 italic">"{item.lesson}"</p>
-                        <div className="flex justify-between items-center">
-                          <span className="text-[10px] text-[#555] uppercase">Achievement Reward:</span>
-                          <span className="text-[10px] text-[#00ff00] font-bold uppercase">{item.reward}</span>
-                        </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </div>
 
@@ -1522,128 +1544,6 @@ const fetchPoints = async (address: string) => {
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {showCreateModal && isAdmin && (
-          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-[#333] p-6 rounded-sm space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <h3 className="text-lg font-black uppercase tracking-tighter">Create Candidate</h3>
-                <button onClick={() => setShowCreateModal(false)} className="text-xs uppercase text-[#888] hover:text-white">Close</button>
-              </div>
-              <input
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
-                value={newCandidate.name}
-                onChange={(e) => setNewCandidate({ ...newCandidate, name: e.target.value })}
-                placeholder="Candidate Name"
-              />
-              <textarea
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-28"
-                value={newCandidate.story}
-                onChange={(e) => setNewCandidate({ ...newCandidate, story: e.target.value })}
-                placeholder="Story"
-              />
-              <textarea
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-20"
-                value={newCandidate.reason}
-                onChange={(e) => setNewCandidate({ ...newCandidate, reason: e.target.value })}
-                placeholder="Reason"
-              />
-              <input
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
-                value={newCandidate.image_url}
-                onChange={(e) => setNewCandidate({ ...newCandidate, image_url: e.target.value })}
-                placeholder="Image URL"
-              />
-              <div className="flex items-center gap-2 text-sm">
-                <input
-                  id="candidate-published"
-                  type="checkbox"
-                  checked={newCandidate.is_published}
-                  onChange={(e) => setNewCandidate({ ...newCandidate, is_published: e.target.checked })}
-                />
-                <label htmlFor="candidate-published">Published</label>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={createCandidate}
-                  className="flex-1 py-3 bg-[#00ff00] text-black font-black uppercase tracking-widest"
-                >
-                  Create
-                </button>
-                <button
-                  onClick={() => setShowCreateModal(false)}
-                  className="flex-1 py-3 border border-[#333] font-bold uppercase tracking-widest"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showAdminEdit && editingCandidate && (
-          <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl bg-[#0a0a0a] border border-[#333] p-6 rounded-sm space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <h3 className="text-lg font-black uppercase tracking-tighter">Edit Candidate</h3>
-                <button onClick={() => { setEditingCandidate(null); setShowAdminEdit(false); }} className="text-xs uppercase text-[#888] hover:text-white">Close</button>
-              </div>
-              <input
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
-                value={editingCandidate.name}
-                onChange={(e) => setEditingCandidate({ ...editingCandidate, name: e.target.value })}
-                placeholder="Candidate Name"
-              />
-              <textarea
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-28"
-                value={editingCandidate.story}
-                onChange={(e) => setEditingCandidate({ ...editingCandidate, story: e.target.value })}
-                placeholder="Story"
-              />
-              <textarea
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white h-20"
-                value={editingCandidate.reason}
-                onChange={(e) => setEditingCandidate({ ...editingCandidate, reason: e.target.value })}
-                placeholder="Reason"
-              />
-              <input
-                className="w-full bg-black border border-[#333] p-3 text-sm text-white"
-                value={editingCandidate.image_url ?? ""}
-                onChange={(e) => setEditingCandidate({ ...editingCandidate, image_url: e.target.value })}
-                placeholder="Image URL"
-              />
-              <div className="flex items-center gap-2 text-sm">
-                <input
-                  id="candidate-edit-published"
-                  type="checkbox"
-                  checked={!!editingCandidate.is_published}
-                  onChange={(e) => setEditingCandidate({ ...editingCandidate, is_published: e.target.checked })}
-                />
-                <label htmlFor="candidate-edit-published">Published</label>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => handleUpdateCandidate(editingCandidate.id, {
-                    name: editingCandidate.name,
-                    story: editingCandidate.story,
-                    reason: editingCandidate.reason,
-                    image_url: editingCandidate.image_url,
-                    is_published: editingCandidate.is_published,
-                  })}
-                  className="flex-1 py-3 bg-[#00ff00] text-black font-black uppercase tracking-widest"
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => { setEditingCandidate(null); setShowAdminEdit(false); }}
-                  className="flex-1 py-3 border border-[#333] font-bold uppercase tracking-widest"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
           </div>
         )}
 
